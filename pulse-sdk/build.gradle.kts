@@ -11,6 +11,7 @@ kotlin {
             api(project(":pulse-core"))
             api(project(":pulse-analytics"))
             api(project(":pulse-apm"))
+            api(project(":pulse-runtime"))
             api(project(":pulse-transport"))
         }
         commonTest.dependencies {

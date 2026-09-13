@@ -1,0 +1,4 @@
+# dyld's image table. Kotlin/Native's platform.darwin klib exposes the mach task-level
+# _dyld_image_infos plumbing but not the plain <mach-o/dyld.h> enumeration API, so bind it here.
+headers = mach-o/dyld.h
+package = pulse.runtime.dyld
