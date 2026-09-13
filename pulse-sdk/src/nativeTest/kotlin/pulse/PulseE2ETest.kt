@@ -10,6 +10,10 @@ import pulse.core.PulseConfig
 import kotlin.test.Test
 import kotlin.test.assertTrue
 
+// Test ports are deliberately below 32768, outside the kernel's ephemeral range
+// (/proc/sys/net/ipv4/ip_local_port_range, typically 32768-60999). A fixed listen port
+// inside that range intermittently loses the bind to some other process's outbound
+// connection, which SO_REUSEADDR does not help with — it surfaces as a flaky EADDRINUSE.
 /**
  * End-to-end skeleton check: a msgtrans server stands in for Pulse ingest and decodes the batch;
  * Pulse.start connects over the transport, the pipeline flushes a batch, the server receives and
@@ -19,12 +23,18 @@ class PulseE2ETest {
 
     @Test
     fun startTrackAndIngest() = runReactor {
-        val port = 39610
+        val port = 19610
         val firstBatchDecoded = CompletableDeferred<Int>()
         val server = Transport.bind(this, "127.0.0.1", port) { conn ->
             conn.onRequest { payload, _ ->
-                val events = JsonEventCodec.decode(payload)
-                if (!firstBatchDecoded.isCompleted) firstBatchDecoded.complete(events.size)
+                val batch = JsonEventCodec.decode(payload)
+                if (!firstBatchDecoded.isCompleted) {
+                    // The identity must be on the wire; a batch without a device id is useless
+                    // to the server no matter how many events it carries.
+                    check(batch.identity.deviceId.isNotEmpty()) { "batch carried no device id" }
+                    check(batch.identity.projectId == "vip-mall") { "wrong project on the batch" }
+                    firstBatchDecoded.complete(batch.events.size)
+                }
                 ByteArray(0) // ack
             }
         }

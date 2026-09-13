@@ -28,9 +28,12 @@ class PulseCoreTest {
     @Test
     fun jsonCodecRoundTrips() {
         val events = listOf(ev("purchase"), ev("view"))
-        val decoded = JsonEventCodec.decode(JsonEventCodec.encode(events))
-        assertEquals(events.map { it.name }, decoded.map { it.name })
-        assertEquals(events.map { it.kind }, decoded.map { it.kind })
+        val identity = WireIdentity("p", "install", "device", userId = "u")
+        val decoded = JsonEventCodec.decode(JsonEventCodec.encode(EventBatch(identity, events)))
+        assertEquals(events.map { it.name }, decoded.events.map { it.name })
+        assertEquals(events.map { it.kind }, decoded.events.map { it.kind })
+        // Identity travels with the batch; without it the server cannot count devices or users.
+        assertEquals(identity, decoded.identity)
     }
 
     @Test
@@ -47,7 +50,7 @@ class PulseCoreTest {
         repeat(5) { client.emit(EventKind.Analytics, "e$it") }
         client.flushOnce()
         assertEquals(1, sent.size)
-        assertEquals(5, JsonEventCodec.decode(sent[0]).size)
+        assertEquals(5, JsonEventCodec.decode(sent[0]).events.size)
     }
 
     @Test
@@ -57,7 +60,7 @@ class PulseCoreTest {
         val sink = object : EventSink {
             override suspend fun send(batch: ByteArray) {
                 if (fail) throw RuntimeException("down")
-                delivered.add(JsonEventCodec.decode(batch).size)
+                delivered.add(JsonEventCodec.decode(batch).events.size)
             }
             override suspend fun close() {}
         }

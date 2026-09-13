@@ -22,6 +22,6 @@ object NoopEventSink : EventSink {
 
 /** Encodes a batch of events to bytes for the wire. JSON by default (shared with the web/TS side). */
 interface EventCodec {
-    fun encode(events: List<Event>): ByteArray
-    fun decode(bytes: ByteArray): List<Event>
+    fun encode(batch: EventBatch): ByteArray
+    fun decode(bytes: ByteArray): EventBatch
 }
