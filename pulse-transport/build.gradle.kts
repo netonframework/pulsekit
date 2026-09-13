@@ -4,6 +4,7 @@ kotlin {
     // Aligned with msgtrans-kotlin's targets (the transport is native-only). iOS follows once
     // neton-io/msgtrans add Apple client targets (nw/kqueue) — a later step.
     listOf(macosArm64(), macosX64(), linuxX64(), linuxArm64())
+    iosArm64(); iosSimulatorArm64(); iosX64()
     sourceSets {
         commonMain.dependencies {
             api(project(":pulse-core"))
