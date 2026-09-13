@@ -1,7 +1,11 @@
 plugins { kotlin("multiplatform") }
 repositories { mavenCentral() }
 kotlin {
-    listOf(macosArm64(), macosX64(), linuxX64(), linuxArm64())
+    listOf(macosArm64(), macosX64(), linuxX64(), linuxArm64()).forEach { t ->
+        t.binaries.executable("pulseSmoke") { entryPoint = "pulse.pulseSmokeMain" }
+    }
+    // iOS client targets (library only; the SDK is consumed as a framework).
+    iosArm64(); iosSimulatorArm64(); iosX64()
     sourceSets {
         commonMain.dependencies {
             api(project(":pulse-core"))
