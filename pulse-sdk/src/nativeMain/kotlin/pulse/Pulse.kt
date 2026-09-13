@@ -3,43 +3,84 @@ package pulse
 import kotlinx.coroutines.CoroutineScope
 import pulse.analytics.Analytics
 import pulse.apm.Apm
+import pulse.apm.CrashReporter
 import pulse.core.Identity
 import pulse.core.PulseClient
 import pulse.core.PulseConfig
-import pulse.core.newId
+import pulse.core.persistentDeviceId
+import pulse.core.persistentInstallationId
+import pulse.runtime.Runtime
 import pulse.transport.MsgTransEventSink
 
 /**
- * Batteries-included SDK entry. Wires the core pipeline, the analytics/apm surfaces and the
+ * Batteries-included SDK entry. Wires the core pipeline, the analytics/apm/runtime surfaces and the
  * msgtrans ingest transport. Apps that want link-time stripping can instead build a [PulseClient]
  * with only the capabilities they need; this umbrella is the convenience path.
  *
- * Outward-neutral by design (Pulse / analytics / apm), matching the naming convention in the
- * architecture doc — nothing here reads as security/audit tooling.
+ * Outward-neutral by design (Pulse / analytics / apm / runtime), matching the naming convention in
+ * the architecture doc — nothing here reads as security/audit tooling.
  */
 class Pulse private constructor(
     val client: PulseClient,
     val analytics: Analytics,
     val apm: Apm,
+    /** Non-null only when [PulseConfig.runtime] is on, so the capability can be stripped. */
+    val runtime: Runtime?,
 ) {
     fun identify(userId: String) = analytics.identify(userId)
     fun track(name: String, attributes: Map<String, Any?> = emptyMap()) = analytics.track(name, attributes)
     suspend fun stop() = client.close()
 
     companion object {
+
         /**
-         * Start the SDK: open the ingest connection, begin the flush pipeline, emit app_launch.
-         * TODO(persist): installationId/deviceId are fresh per start here; a real device id must be
-         * persisted across launches (platform-apple / platform-android).
+         * Start the SDK: recover any crash from the previous run, open the ingest connection, begin
+         * the flush pipeline, emit app_launch.
+         *
+         * The order matters. Pending crashes are drained *before* the crash handler is armed,
+         * because arming truncates the record file this run will own — draining afterwards would
+         * throw away the report we came for.
          */
         suspend fun start(scope: CoroutineScope, config: PulseConfig): Pulse {
-            val identity = Identity(config.projectId, installationId = newId(), deviceId = newId())
+            val identity = Identity(
+                config.projectId,
+                // Persisted, so a device stays one device across launches. Regenerating these per
+                // start silently inflates DAU and makes crash-per-device rates meaningless.
+                installationId = persistentInstallationId(),
+                deviceId = persistentDeviceId(),
+            )
             val client = PulseClient(config, identity, scope)
             client.attachSink(MsgTransEventSink.connect(scope, config))
             client.start()
-            val pulse = Pulse(client, Analytics(client), Apm(client))
+
+            val apm = Apm(client)
+            val runtime = if (config.runtime) Runtime(client) else null
+            val pulse = Pulse(client, Analytics(client), apm, runtime)
+
+            if (config.apm) {
+                val dir = storageDirFor(config)
+                // Report last run's crash first, then take ownership of the record file.
+                for (crash in CrashReporter.drainPending(dir)) {
+                    apm.recordCrash(
+                        crash.name,
+                        crash.message,
+                        stack = null,
+                        attributes = mapOf(
+                            "crashed_session_id" to crash.sessionId,
+                            "crashed_at_ms" to crash.timestampMs,
+                        ),
+                    )
+                }
+                CrashReporter.install(dir, client.currentSession.id)
+            }
+
             if (config.analytics) { pulse.analytics.sessionStart(); pulse.analytics.appLaunch() }
+            // The baseline is taken after the session exists so the inventory joins this session.
+            runtime?.captureBaseline()
             return pulse
         }
+
+        private fun storageDirFor(config: PulseConfig): String =
+            config.storageDir ?: "/tmp/pulsekit-${config.projectId}"
     }
 }

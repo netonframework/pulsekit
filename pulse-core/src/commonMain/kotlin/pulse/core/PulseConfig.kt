@@ -18,4 +18,10 @@ data class PulseConfig(
     val flushIntervalMs: Long = 5_000,
     // Local ring buffer cap; oldest events drop when full (stability over completeness).
     val bufferCapacity: Int = 4_096,
+    /**
+     * Where the SDK keeps its few on-disk artefacts (currently only the crash record). Defaults to
+     * a per-project directory under the system temp dir; a host with its own sandbox layout should
+     * point this at a directory it controls and that survives restarts.
+     */
+    val storageDir: String? = null,
 )
