@@ -31,6 +31,8 @@ class PulseClient(
     private var session: Session = newSession()
     private var closed = false
 
+    private val updateJson = kotlinx.serialization.json.Json { ignoreUnknownKeys = true; encodeDefaults = true }
+
     val currentSession: Session get() = session
 
     fun start() {
@@ -74,11 +76,42 @@ class PulseClient(
         }
     }
 
+    /**
+     * Ask the server whether this build should update. Returns [UpdateInfo] with
+     * [UpdateAction.None] whenever there is no answer to be had — no platform configured, no
+     * transport, a timeout, or a reply we cannot parse.
+     *
+     * Failing open is deliberate and load-bearing: this runs during app start, and a telemetry SDK
+     * that can stop an app from starting is a worse problem than a missed update prompt.
+     */
+    suspend fun checkForUpdate(): UpdateInfo {
+        val platform = config.platform ?: return UpdateInfo()
+        val request = UpdateCheckRequest(
+            platform = platform,
+            appKey = config.projectId,
+            packageName = config.packageName,
+            buildNumber = config.buildNumber,
+        )
+        return try {
+            val encoded = updateJson.encodeToString(UpdateCheckRequest.serializer(), request)
+            val reply = sink.request(UPDATE_CHECK_BIZ_TYPE, encoded.encodeToByteArray()) ?: return UpdateInfo()
+            if (reply.isEmpty()) return UpdateInfo()
+            updateJson.decodeFromString(UpdateCheckWireResult.serializer(), reply.decodeToString()).toInfo()
+        } catch (t: Throwable) {
+            UpdateInfo()
+        }
+    }
+
     suspend fun close() {
         if (closed) return
         closed = true
         flushOnce()
         loop?.cancel()
         sink.close()
+    }
+
+    private companion object {
+        /** Mirrors pulse-transport's BIZ_UPDATE_CHECK; core must not depend on the transport. */
+        const val UPDATE_CHECK_BIZ_TYPE = 2
     }
 }

@@ -22,11 +22,25 @@ class MsgTransEventSink(private val conn: Connection) : EventSink {
         // request() throws on timeout / connection failure; PulseClient requeues the batch on throw.
         conn.request(batch, bizType = BIZ_INGEST)
     }
+    /**
+     * A question with an answer, on the same connection. Failures are swallowed into null: the one
+     * caller is the startup update check, and a transport hiccup there must not stop the app.
+     */
+    override suspend fun request(bizType: Int, payload: ByteArray): ByteArray? =
+        try {
+            conn.request(payload, bizType = bizType)
+        } catch (t: Throwable) {
+            null
+        }
+
     override suspend fun close() = conn.close()
 
     companion object {
         /** Application biz type for an event-batch ingest request. */
         const val BIZ_INGEST = 1
+
+        /** Application biz type for the startup update check. */
+        const val BIZ_UPDATE_CHECK = 2
 
         /** Open a Pulse ingest connection over TCP msgtrans using [config]. */
         suspend fun connect(scope: CoroutineScope, config: PulseConfig): MsgTransEventSink =

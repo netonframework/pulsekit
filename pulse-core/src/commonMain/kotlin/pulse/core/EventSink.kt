@@ -11,6 +11,15 @@ package pulse.core
  */
 interface EventSink {
     suspend fun send(batch: ByteArray)
+
+    /**
+     * Ask the server a question that expects an answer, on the same connection as the events.
+     * Currently only the startup update check. Returns null when the sink has no request channel
+     * (the no-op sink) or the call fails — callers must treat that as "no answer", never as an
+     * error worth failing startup over.
+     */
+    suspend fun request(bizType: Int, payload: ByteArray): ByteArray? = null
+
     suspend fun close()
 }
 

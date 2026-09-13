@@ -24,4 +24,15 @@ data class PulseConfig(
      * point this at a directory it controls and that survives restarts.
      */
     val storageDir: String? = null,
+    /**
+     * The host build's own identity, used for the startup update check. Left null the check is
+     * skipped entirely — a host that manages its own updates should not be asked about them.
+     *
+     * [buildNumber] must be the platform's monotonic counter (CFBundleVersion on iOS, versionCode
+     * on Android), not a display version: the server compares integers precisely so the comparison
+     * rule cannot drift between the two sides.
+     */
+    val platform: String? = null,
+    val packageName: String? = null,
+    val buildNumber: Long = 0,
 )

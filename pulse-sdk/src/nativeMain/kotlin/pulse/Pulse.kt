@@ -7,6 +7,8 @@ import pulse.apm.CrashReporter
 import pulse.core.Identity
 import pulse.core.PulseClient
 import pulse.core.PulseConfig
+import pulse.core.UpdateAction
+import pulse.core.UpdateInfo
 import pulse.core.persistentDeviceId
 import pulse.core.persistentInstallationId
 import pulse.runtime.Runtime
@@ -26,6 +28,12 @@ class Pulse private constructor(
     val apm: Apm,
     /** Non-null only when [PulseConfig.runtime] is on, so the capability can be stripped. */
     val runtime: Runtime?,
+    /**
+     * The startup update check's answer. [UpdateAction.None] when no platform was configured, when
+     * the build is current, or when the check could not be completed — the host can treat this as
+     * "there is nothing to do" in every one of those cases.
+     */
+    val update: UpdateInfo,
 ) {
     fun identify(userId: String) = analytics.identify(userId)
     fun track(name: String, attributes: Map<String, Any?> = emptyMap()) = analytics.track(name, attributes)
@@ -55,7 +63,11 @@ class Pulse private constructor(
 
             val apm = Apm(client)
             val runtime = if (config.runtime) Runtime(client) else null
-            val pulse = Pulse(client, Analytics(client), apm, runtime)
+
+            // Asked before the first events go out, so the host has the answer as early as it can
+            // possibly act on it — a forced update should gate the UI, not arrive after it.
+            val update = client.checkForUpdate()
+            val pulse = Pulse(client, Analytics(client), apm, runtime, update)
 
             if (config.apm) {
                 val dir = storageDirFor(config)

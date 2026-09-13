@@ -12,6 +12,8 @@ import kotlin.native.concurrent.TransferMode
 import kotlin.native.concurrent.Worker
 import neton.io.net.runReactor
 import pulse.core.PulseConfig
+import kotlin.concurrent.atomics.AtomicReference
+import kotlin.concurrent.atomics.ExperimentalAtomicApi
 
 /**
  * The Objective-C facing entry point, and the one an iOS host should use.
@@ -28,7 +30,7 @@ import pulse.core.PulseConfig
  * The host app's Kotlin version does not have to match this SDK's — the boundary here is the
  * framework's Objective-C interface, not a klib.
  */
-@OptIn(ObsoleteWorkersApi::class)
+@OptIn(ObsoleteWorkersApi::class, ExperimentalAtomicApi::class)
 object PulseSDK {
     // Named PulseSDK, not PulseKit: Swift drops the framework prefix from exported classes, so an
     // object called PulseKit inside a framework called PulseKit collides with the module name at
@@ -57,6 +59,24 @@ object PulseSDK {
     private var commands: Channel<Command>? = null
     private var worker: Worker? = null
 
+    /**
+     * The startup update check's answer, published once the SDK has connected and asked.
+     *
+     * The host reads this to decide whether to gate its UI, so it is written by the reactor thread
+     * and read by the main thread. An AtomicReference rather than a plain var: this is the one
+     * value that genuinely crosses threads, and a torn read here would mean a forced update the
+     * host never sees.
+     */
+    private val updateState = AtomicReference<AppUpdate?>(null)
+
+    /**
+     * The update check's answer, or null while it is still in flight.
+     *
+     * A host that must gate on a forced update should wait for this with [awaitUpdateInfo] rather
+     * than reading it once at launch, since the connection takes a moment to establish.
+     */
+    val updateInfo: AppUpdate? get() = updateState.load()
+
     private const val COMMAND_QUEUE_CAPACITY = 512
 
     /** True once [start] has spun up the reactor thread. */
@@ -75,6 +95,7 @@ object PulseSDK {
         w.execute(TransferMode.SAFE, { config to queue }) { (cfg, channel) ->
             runReactor {
                 val pulse = Pulse.start(this, cfg)
+                updateState.store(pulse.update.toAppUpdate())
                 launch {
                     for (command in channel) {
                         when (command) {
@@ -113,8 +134,39 @@ object PulseSDK {
      * Objective-C boundary, where a Kotlin data class with ten defaulted parameters turns into an
      * initialiser taking all ten.
      */
-    fun start(projectId: String, host: String, port: Int = 9600, runtime: Boolean = true) =
-        start(PulseConfig(projectId = projectId, host = host, port = port, runtime = runtime))
+    fun start(
+        projectId: String,
+        host: String,
+        port: Int = 9600,
+        runtime: Boolean = true,
+        packageName: String? = null,
+        buildNumber: Long = 0,
+    ) = start(
+        PulseConfig(
+            projectId = projectId, host = host, port = port, runtime = runtime,
+            // Fixed to "ios" here: this facade only exists on Apple targets, so asking the host to
+            // pass its own platform would only create a way to get it wrong.
+            platform = "ios", packageName = packageName, buildNumber = buildNumber,
+        ),
+    )
+
+    /**
+     * Wait up to [timeoutMillis] for the startup update check to come back.
+     *
+     * Returns [UpdateAction.None] on timeout, not null: a host calling this is about to decide
+     * whether to show its UI, and "we could not ask" has to mean "let them in". A telemetry SDK
+     * that can strand users behind a spinner is worse than a missed update prompt.
+     */
+    fun awaitUpdateInfo(timeoutMillis: Long = 5_000): AppUpdate {
+        val deadline = platform.posix.time(null).toLong() * 1000L + timeoutMillis
+        while (updateState.load() == null) {
+            if (platform.posix.time(null).toLong() * 1000L > deadline) return noUpdate()
+            platform.posix.usleep(5_000u)
+        }
+        return updateState.load() ?: noUpdate()
+    }
+
+    private fun noUpdate() = AppUpdate(AppUpdateAction.None, null, 0L, "", null)
 
     /** A business event. Attributes are strings so the Objective-C signature stays predictable. */
     fun track(name: String, attributes: Map<String, String> = emptyMap()) {
@@ -161,6 +213,7 @@ object PulseSDK {
             queue.close()
         }
         commands = null
+        updateState.store(null)
         w.requestTermination(processScheduledJobs = false)
         worker = null
     }
