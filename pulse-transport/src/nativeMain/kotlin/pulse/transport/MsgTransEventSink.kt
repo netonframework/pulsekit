@@ -5,6 +5,7 @@ import msgtrans.transport.Connection
 import msgtrans.transport.ConnectionConfig
 import msgtrans.transport.Transport
 import pulse.core.EventSink
+import pulse.core.PulseBizType
 import pulse.core.PulseConfig
 
 /**
@@ -20,7 +21,7 @@ import pulse.core.PulseConfig
 class MsgTransEventSink(private val conn: Connection) : EventSink {
     override suspend fun send(batch: ByteArray) {
         // request() throws on timeout / connection failure; PulseClient requeues the batch on throw.
-        conn.request(batch, bizType = BIZ_INGEST)
+        conn.request(batch, bizType = PulseBizType.EVENT_BATCH_UPLOAD)
     }
     /**
      * A question with an answer, on the same connection. Failures are swallowed into null: the one
@@ -36,12 +37,6 @@ class MsgTransEventSink(private val conn: Connection) : EventSink {
     override suspend fun close() = conn.close()
 
     companion object {
-        /** Application biz type for an event-batch ingest request. */
-        const val BIZ_INGEST = 1
-
-        /** Application biz type for the startup update check. */
-        const val BIZ_UPDATE_CHECK = 2
-
         /** Open a Pulse ingest connection over TCP msgtrans using [config]. */
         suspend fun connect(scope: CoroutineScope, config: PulseConfig): MsgTransEventSink =
             MsgTransEventSink(Transport.connect(scope, config.host, config.port,

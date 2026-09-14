@@ -67,12 +67,17 @@ instead of the umbrella `Pulse` entry.
 
 ## Transport and delivery
 
-A batch is sent as one msgtrans **request** with biz type `1` (ingest); the server's reply confirms
+A batch is sent as one msgtrans **request** with biz type `1` (`EVENT_BATCH_UPLOAD`); the server's reply confirms
 receipt into the pipeline. `request` gives delivery confirmation and backpressure; a failed send
 requeues the batch in the bounded ring buffer (stability over completeness — oldest events drop
 when the buffer is full). A POSIX crash handler cannot safely run Kotlin allocation, coroutine, or
 network code, so it writes a preallocated crash record and reports that record through the normal
 pipeline on the next launch.
+
+The complete `biz_type`, compression and delivery contract is in
+[WIRE_PROTOCOL.md](WIRE_PROTOCOL.md). The msgtrans header already defines zstd and zlib values, but
+the Kotlin transport does not transform payload bytes yet; clients therefore send `none` until the
+codec and decompression limits are implemented on both ends.
 
 ## Build and test
 

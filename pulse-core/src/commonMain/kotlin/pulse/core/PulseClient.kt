@@ -94,7 +94,7 @@ class PulseClient(
         )
         return try {
             val encoded = updateJson.encodeToString(UpdateCheckRequest.serializer(), request)
-            val reply = sink.request(UPDATE_CHECK_BIZ_TYPE, encoded.encodeToByteArray()) ?: return UpdateInfo()
+            val reply = sink.request(PulseBizType.APP_UPDATE_CHECK, encoded.encodeToByteArray()) ?: return UpdateInfo()
             if (reply.isEmpty()) return UpdateInfo()
             updateJson.decodeFromString(UpdateCheckWireResult.serializer(), reply.decodeToString()).toInfo()
         } catch (t: Throwable) {
@@ -110,8 +110,4 @@ class PulseClient(
         sink.close()
     }
 
-    private companion object {
-        /** Mirrors pulse-transport's BIZ_UPDATE_CHECK; core must not depend on the transport. */
-        const val UPDATE_CHECK_BIZ_TYPE = 2
-    }
 }
