@@ -96,5 +96,32 @@ class PulseCoreTest {
         assertEquals(listOf(3), delivered)
     }
 
+    @Test
+    fun selectsCompressionOnceAndKeepsItAcrossRetry() = runTest {
+        var fail = true
+        val compressionCodes = mutableListOf<Int>()
+        val sink = object : EventSink {
+            override suspend fun send(batch: ByteArray) = error("compression-aware path expected")
+            override suspend fun send(batch: ByteArray, compression: Int) {
+                compressionCodes += compression
+                if (fail) throw RuntimeException("down")
+            }
+            override suspend fun close() {}
+        }
+        val client = PulseClient(
+            PulseConfig(
+                projectId = "t", host = "127.0.0.1", batchMaxEvents = 100,
+                uploadCompression = UploadCompression.Zlib, compressionMinBytes = 1,
+                retryBaseDelayMs = 0, retryMaxDelayMs = 0,
+            ),
+            Identity("t", "i", "d"), this, sink,
+        )
+        client.emit(EventKind.Analytics, "event")
+        client.flushOnce()
+        fail = false
+        client.flushOnce()
+        assertEquals(listOf(UploadCompression.Zlib.wireCode, UploadCompression.Zlib.wireCode), compressionCodes)
+    }
+
     private fun ev(name: String) = Event(newId(), nowMillis(), "sess", EventKind.Analytics, name)
 }

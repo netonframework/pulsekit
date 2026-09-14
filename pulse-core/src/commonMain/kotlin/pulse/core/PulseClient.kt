@@ -77,13 +77,17 @@ class PulseClient(
         if (batch.isNotEmpty()) {
             val batchId = newId()
             val encoded = codec.encode(EventBatch(identity.toWire(config), batch, batchId))
-            // Compression 0 = none until msgtrans-kotlin's zstd/zlib transform is wired in.
-            outbox.enqueue(batchId, encoded, compression = 0, eventCount = batch.size, nowMs = now)
+            val compression = if (encoded.size >= config.compressionMinBytes) {
+                config.uploadCompression.wireCode
+            } else {
+                UploadCompression.None.wireCode
+            }
+            outbox.enqueue(batchId, encoded, compression, eventCount = batch.size, nowMs = now)
         }
 
         val pending = outbox.oldestDue(now) ?: return
         try {
-            sink.send(pending.payload)
+            sink.send(pending.payload, pending.compression)
             outbox.acknowledge(pending.sequence)
             // Drain recovered backlog without waiting another flush interval. Conflation keeps
             // this at one wake-up even when producers are also active.

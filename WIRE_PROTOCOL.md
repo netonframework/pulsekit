@@ -28,11 +28,11 @@ whole encoded batch once, rather than compressing individual events. The msgtran
 | `1` | zstd |
 | `2` | zlib |
 
-Small payloads may remain uncompressed. A sender must never label uncompressed bytes as zstd or
-zlib. A receiver must reject unsupported encodings, compressed data that fails validation, an
-expanded payload above its configured limit, or an unreasonable expansion ratio. The current
-msgtrans-kotlin codec preserves this field but does not yet transform the payload; Pulse must keep
-using `none` until the zstd/zlib codec implementation is connected on both ends.
+Payloads smaller than `compressionMinBytes` remain uncompressed. Larger event batches use the
+configured codec (zstd by default). A sender must never label uncompressed bytes as zstd or zlib.
+A receiver rejects unsupported encodings, invalid compressed streams, and output expanding beyond
+16 MiB. msgtrans-kotlin compresses after the complete payload is built and normalizes inbound
+packets back to plaintext before dispatch.
 
 ## Delivery contract
 

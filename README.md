@@ -70,7 +70,9 @@ instead of the umbrella `Pulse` entry.
 A batch is sent as one msgtrans **request** with biz type `1` (`EVENT_BATCH_UPLOAD`); the server's reply confirms
 receipt into the pipeline. `request` gives delivery confirmation and backpressure; a failed send
 remains in a bounded SQLDelight/SQLite outbox and is retried in FIFO order after backoff or the next
-process launch. A row is deleted only after the matching msgtrans response. A POSIX crash handler
+process launch. Batches of at least 1 KiB use zstd by default (`uploadCompression` also supports
+zlib or none); smaller batches avoid compression overhead. A row is deleted only after the matching
+msgtrans response. A POSIX crash handler
 cannot safely run Kotlin allocation, coroutine, or
 network code, so it writes a preallocated crash record and reports that record through the normal
 pipeline on the next launch.

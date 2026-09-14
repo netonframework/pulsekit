@@ -1,6 +1,7 @@
 package pulse.transport
 
 import kotlinx.coroutines.CoroutineScope
+import msgtrans.core.Compression
 import msgtrans.transport.Connection
 import msgtrans.transport.ConnectionConfig
 import msgtrans.transport.Transport
@@ -20,8 +21,16 @@ import pulse.core.PulseConfig
  */
 class MsgTransEventSink(private val conn: Connection) : EventSink {
     override suspend fun send(batch: ByteArray) {
+        send(batch, Compression.None.code)
+    }
+
+    override suspend fun send(batch: ByteArray, compression: Int) {
         // request() throws on timeout / connection failure; PulseClient requeues the batch on throw.
-        conn.request(batch, bizType = PulseBizType.EVENT_BATCH_UPLOAD)
+        conn.request(
+            batch,
+            bizType = PulseBizType.EVENT_BATCH_UPLOAD,
+            compression = Compression.fromCode(compression),
+        )
     }
     /**
      * A question with an answer, on the same connection. Failures are swallowed into null: the one

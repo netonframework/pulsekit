@@ -12,6 +12,9 @@ package pulse.core
 interface EventSink {
     suspend fun send(batch: ByteArray)
 
+    /** Send with a msgtrans wire compression code. Existing sinks may ignore the preference. */
+    suspend fun send(batch: ByteArray, compression: Int) = send(batch)
+
     /**
      * Ask the server a question that expects an answer, on the same connection as the events.
      * Currently only the startup update check. Returns null when the sink has no request channel

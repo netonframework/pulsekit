@@ -44,7 +44,17 @@ data class PulseConfig(
     val buildNumber: Long = 0,
     /** Display version, e.g. "1.4.2"; reported alongside the build number for readability. */
     val appVersion: String? = null,
+    /** Whole-batch msgtrans payload compression; small batches stay uncompressed. */
+    val uploadCompression: UploadCompression = UploadCompression.Zstd,
+    val compressionMinBytes: Int = 1_024,
 ) {
     /** Preferred product terminology; [projectId] remains the stored name for source compatibility. */
     val appId: String get() = projectId
+}
+
+/** Values intentionally match the msgtrans compression byte; they are part of the wire ABI. */
+enum class UploadCompression(val wireCode: Int) {
+    None(0),
+    Zstd(1),
+    Zlib(2),
 }
