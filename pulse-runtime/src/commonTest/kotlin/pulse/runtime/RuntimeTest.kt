@@ -113,4 +113,30 @@ class RuntimeTest {
         assertEquals(da, db, "inventory digest is not stable across instances")
         assertTrue(da.trim('"').length == 16, "expected a 16-hex-char digest, got $da")
     }
+
+    @Test
+    fun scanIgnoresSystemImagesLoadedAfterLaunch() = runTest {
+        val sink = CapturingSink()
+        val client = clientWith(sink, this)
+        val runtime = Runtime(client)
+
+        // Baseline covers everything currently loaded, so a scan right after it has nothing new.
+        runtime.captureBaseline()
+        client.flushOnce()
+        sink.events.clear()
+
+        // Whatever the OS loads lazily from here on is outside the app bundle. A scan must stay
+        // silent about it: an unfiltered scan produced 418 events in one real iOS session, which
+        // buries the single bundled image that would have been worth seeing.
+        val fresh = runtime.scan()
+        client.flushOnce()
+        assertTrue(
+            fresh.all { it in bundledModules() },
+            "scan reported an image outside the app bundle: ${fresh.map { it.name }}",
+        )
+        assertTrue(
+            sink.events.all { it.name != "module_loaded" || it.source.module != null },
+            "module_loaded events must carry the image they refer to",
+        )
+    }
 }

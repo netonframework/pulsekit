@@ -12,6 +12,9 @@ import kotlin.native.concurrent.TransferMode
 import kotlin.native.concurrent.Worker
 import neton.io.net.runReactor
 import pulse.core.PulseConfig
+import pulse.runtime.SensitiveApiMonitor
+import pulse.runtime.reportMonitorInstallation
+import pulse.runtime.reportSensitiveApiObservations
 import kotlin.concurrent.atomics.AtomicReference
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
 
@@ -79,6 +82,13 @@ object PulseSDK {
 
     private const val COMMAND_QUEUE_CAPACITY = 512
 
+    /**
+     * How often runtime observations are gathered. Half a minute: soon enough that a launch-time
+     * clipboard read reaches the server within the same session, rare enough that the polling
+     * itself is not the thing draining the battery.
+     */
+    private const val RUNTIME_POLL_MS = 30_000L
+
     /** True once [start] has spun up the reactor thread. */
     val isRunning: Boolean get() = worker != null
 
@@ -88,6 +98,15 @@ object PulseSDK {
      */
     fun start(config: PulseConfig) {
         if (worker != null) return
+
+        // Hooks go in first, synchronously, before anything else in start() can block.
+        //
+        // They used to be armed on the reactor thread after Pulse.start had completed, which
+        // includes opening a connection and waiting for the update check. That is a network round
+        // trip's worth of launch during which nothing is being watched — and launch is exactly
+        // when an advertising or analytics SDK reads the identifiers it came for. Installing is
+        // local and allocation-light, so there is no reason for it to wait behind I/O.
+        if (config.runtime) SensitiveApiMonitor.install()
         val queue = Channel<Command>(COMMAND_QUEUE_CAPACITY, BufferOverflow.DROP_OLDEST)
         commands = queue
         val w = Worker.start(name = "pulsekit")
@@ -96,6 +115,24 @@ object PulseSDK {
             runReactor {
                 val pulse = Pulse.start(this, cfg)
                 updateState.store(pulse.update.toAppUpdate())
+
+                // Runtime observation runs on a timer rather than per event. Two things are being
+                // polled: images loaded after launch, which the baseline by definition cannot
+                // show, and sensitive API calls, which are collapsed per (api, caller) so a
+                // callback firing continuously costs one event per tick instead of thousands.
+                val runtime = pulse.runtime
+                if (runtime != null) {
+                    // Already armed above; this only reports what ended up being watched, which
+                    // needs the client that now exists.
+                    runtime.reportMonitorInstallation()
+                    launch {
+                        while (true) {
+                            kotlinx.coroutines.delay(RUNTIME_POLL_MS)
+                            runtime.scan()
+                            runtime.reportSensitiveApiObservations()
+                        }
+                    }
+                }
                 launch {
                     for (command in channel) {
                         when (command) {

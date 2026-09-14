@@ -54,14 +54,22 @@ class Runtime(private val client: PulseClient) {
     }
 
     /**
-     * Re-read the loader's table and report images that were not in the baseline, one event each.
-     * New images after start are the interesting signal; the baseline is not re-sent.
+     * Re-read the loader's table and report *bundled* images that were not in the baseline, one
+     * event each. An image appearing after launch is the interesting signal — an SDK loading a
+     * payload it did not ship with is precisely what this is for — but only for images inside the
+     * app. The OS lazily loads hundreds of its own dylibs during a normal session and none of them
+     * say anything about the app.
      *
      * Returns what was newly seen, and folds it into the baseline so each image reports once.
      */
     fun scan(): List<LoadedModule> {
         val current = loadedModules()
-        val fresh = current.filter { it.path !in baseline }
+        // Bundled images only, exactly as the baseline does. Reported without this filter, a real
+        // iOS launch produced 418 events in one session — every system dylib the OS happens to
+        // load lazily. None of it is auditable surface, all of it is storage the server pays for,
+        // and it buries the one line that would have mattered.
+        val bundledPaths = bundledModules(current).mapTo(HashSet()) { it.path }
+        val fresh = current.filter { it.path !in baseline && it.path in bundledPaths }
         if (fresh.isEmpty()) return emptyList()
         for (m in fresh) {
             client.emit(
