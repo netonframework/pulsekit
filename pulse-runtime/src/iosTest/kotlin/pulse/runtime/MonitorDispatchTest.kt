@@ -7,6 +7,7 @@ import kotlinx.cinterop.toKString
 import kotlin.native.concurrent.TransferMode
 import kotlin.native.concurrent.Worker
 import platform.UIKit.UIDevice
+import platform.Foundation.*
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -106,6 +107,34 @@ class MonitorDispatchTest {
         assertTrue(request.detail.contains("api.example.test"), request.detail)
         assertTrue(!request.detail.contains("secret123"), "the query string was stored: ${request.detail}")
         assertTrue(!request.detail.contains("frag"), "the fragment was stored: ${request.detail}")
+    }
+
+    @Test
+    fun networkEvidenceIncludesShapeButNeverValues() {
+        SensitiveApiMonitor.install()
+        SensitiveApiMonitor.drain()
+
+        val url = platform.Foundation.NSURL.URLWithString(
+            "https://ads.example.test/collect?device_id=private-device&token=secret-token",
+        )!!
+        val request = NSMutableURLRequest.requestWithURL(url)
+        request.HTTPMethod = "POST"
+        request.setValue("application/json; charset=utf-8", forHTTPHeaderField = "Content-Type")
+        request.setValue("Bearer private-token", forHTTPHeaderField = "Authorization")
+        request.HTTPBody = NSData()
+        platform.Foundation.NSURLSession.sharedSession.dataTaskWithRequest(request).resume()
+
+        val detail = SensitiveApiMonitor.drain()
+            .single { it.eventName == "network_request" }.detail.orEmpty()
+        assertTrue(detail.startsWith("POST https://ads.example.test/collect"), detail)
+        assertTrue(detail.contains("query_keys=device_id,token"), detail)
+        assertTrue(detail.contains("Authorization"), detail)
+        assertTrue(detail.contains("Content-Type"), detail)
+        assertTrue(detail.contains("content_type=application/json"), detail)
+        assertTrue(detail.contains("body_bytes=0"), detail)
+        assertTrue(!detail.contains("private-device"), detail)
+        assertTrue(!detail.contains("secret-token"), detail)
+        assertTrue(!detail.contains("Bearer"), detail)
     }
 
     @Test

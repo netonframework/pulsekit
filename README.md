@@ -1,7 +1,8 @@
 # PulseKit
 
-Cross-platform application analytics, performance/error monitoring, and runtime observation for the
-Kotlin/Native stack. Product target: 友盟 (U-App analytics + U-APM) class, plus Runtime attribution.
+Application analytics, performance/error monitoring, and runtime observation for the
+Kotlin/Native stack. The current product target is iOS: 友盟 (U-App analytics + U-APM) class,
+plus evidence-oriented auditing of third-party plugins inserted during signing and packaging.
 PulseKit is a data/reliability SDK — it does not integrate any IM/PrivChat logic.
 
 The client SDK produces one unified `Event` model and ships batches to the Pulse ingest server over
@@ -83,3 +84,6 @@ Current boundaries:
 - Apple runtime observation covers the currently registered Objective-C API signatures. Android
   transport, lifecycle, crash, ANR, and runtime collectors have not been implemented yet.
 - `pulse-push` and web/TypeScript SDK interoperability have not been implemented.
+
+The iOS third-party audit evidence model, privacy boundary, known coverage gaps, and delivery order
+are defined in [IOS_RUNTIME_AUDIT.md](IOS_RUNTIME_AUDIT.md). Android work is intentionally deferred.

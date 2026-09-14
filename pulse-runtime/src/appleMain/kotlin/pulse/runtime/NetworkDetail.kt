@@ -6,8 +6,7 @@ import kotlinx.cinterop.COpaquePointer
 import kotlinx.cinterop.ExperimentalForeignApi
 import kotlinx.cinterop.interpretObjCPointer
 import kotlinx.cinterop.BetaInteropApi
-import platform.Foundation.NSURL
-import platform.Foundation.NSURLSessionTask
+import platform.Foundation.*
 
 /**
  * Reads the destination of a network request, in a form that is safe to store.
@@ -20,12 +19,48 @@ import platform.Foundation.NSURLSessionTask
  */
 internal object NetworkDetail {
 
-    /** Sanitised destination of the task being resumed, or null if it cannot be read. */
+    /**
+     * Bounded, value-free request evidence from the task being resumed.
+     *
+     * Field names are evidence of the shape of the transfer, while field values may be the exact
+     * secret we are trying to protect. Keep the former and never copy the latter.
+     */
     fun ofTask(self: COpaquePointer?): String? {
         val ptr = self ?: return null
         val task = interpretObjCPointer<NSURLSessionTask>(ptr.rawValue)
-        val url = task.originalRequest?.URL ?: task.currentRequest?.URL ?: return null
-        return sanitize(url)
+        val request = task.originalRequest ?: task.currentRequest ?: return null
+        return describe(request)
+    }
+
+    internal fun describe(request: NSURLRequest): String? {
+        val url = request.URL ?: return null
+        val destination = sanitize(url) ?: return null
+        val method = request.HTTPMethod?.uppercase() ?: "GET"
+        val queryKeys = fieldNames(url.query)
+        val headerNames = request.allHTTPHeaderFields?.keys
+            ?.map { boundedName(it.toString()) }
+            ?.filter(String::isNotBlank)
+            ?.distinct()
+            ?.sorted()
+            ?.take(MAX_FIELDS)
+            .orEmpty()
+        val contentType = request.valueForHTTPHeaderField("Content-Type")
+            ?.substringBefore(';')
+            ?.trim()
+            ?.take(MAX_NAME_LENGTH)
+        val bodyLength = request.HTTPBody?.length?.toLong()
+        val streamed = request.HTTPBodyStream != null
+
+        return buildString {
+            append(method); append(' '); append(destination)
+            if (queryKeys.isNotEmpty()) append(" query_keys=").append(queryKeys.joinToString(","))
+            if (headerNames.isNotEmpty()) append(" header_names=").append(headerNames.joinToString(","))
+            if (!contentType.isNullOrEmpty()) append(" content_type=").append(contentType)
+            when {
+                bodyLength != null -> append(" body_bytes=").append(bodyLength)
+                streamed -> append(" body_stream=true")
+            }
+        }.take(MAX_DETAIL_LENGTH)
     }
 
     /**
@@ -41,4 +76,26 @@ internal object NetworkDetail {
         val port = url.port?.intValue()?.let { ":$it" } ?: ""
         return "$scheme://$host$port$path"
     }
+
+    /** Parse names only. Values are deliberately never decoded or retained. */
+    private fun fieldNames(query: String?): List<String> = query
+        ?.split('&')
+        ?.asSequence()
+        // A bare query component has no separable name/value boundary. Reporting it as a name
+        // could upload a token from URLs shaped like `?eyJ...`, so only named fields are kept.
+        ?.filter { '=' in it }
+        ?.map { it.substringBefore('=') }
+        ?.filter(String::isNotBlank)
+        ?.map(::boundedName)
+        ?.distinct()
+        ?.sorted()
+        ?.take(MAX_FIELDS)
+        ?.toList()
+        .orEmpty()
+
+    private fun boundedName(value: String): String = value.take(MAX_NAME_LENGTH)
+
+    private const val MAX_FIELDS = 32
+    private const val MAX_NAME_LENGTH = 80
+    private const val MAX_DETAIL_LENGTH = 2_048
 }

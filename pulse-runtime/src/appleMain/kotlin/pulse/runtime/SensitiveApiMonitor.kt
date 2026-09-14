@@ -109,10 +109,10 @@ private fun callGetter1(
  *
  * Two things to know about the mechanism, both learned by measuring rather than assuming:
  *
- * 1. Only callers going through `objc_msgSend` are seen. That is every Objective-C and Swift
- *    caller, which is every third-party SDK this exists to watch. Kotlin/Native's *own* bindings
- *    bypass the swizzle, so a test that calls the API from Kotlin observes nothing and would
- *    report a false negative — tests must call through the runtime, as a real SDK does.
+ * 1. Only calls that dispatch through the Objective-C method implementation are seen. This covers
+ *    the Objective-C system APIs used by many Objective-C and Swift SDKs, but not pure Swift,
+ *    C/C++, Network.framework or raw socket calls. Kotlin/Native's *own* bindings may bypass the
+ *    swizzle, so a test must verify ordinary Objective-C dispatch rather than assume coverage.
  * 2. Only zero-argument selectors are hooked. An IMP's signature has to match the method's
  *    exactly, and getting that wrong corrupts the stack rather than failing cleanly. The
  *    zero-argument shapes already cover the identifier reads and the start-collecting calls that
