@@ -11,7 +11,15 @@ kotlin {
     // across that gap. The framework boundary is a plain Objective-C binary interface, so the
     // host's Kotlin version stops mattering. Dynamic rather than static: each Kotlin/Native
     // framework carries its own runtime, and two static ones in one binary collide at link time.
-    iosArm64(); iosSimulatorArm64(); iosX64()
+    val iosTargets = listOf(iosArm64(), iosSimulatorArm64(), iosX64())
+    iosTargets.forEach { target ->
+        target.binaries.configureEach {
+            // Kotlin 2.4 defaults Apple binaries to iOS 15. PulseKit follows the host app and
+            // GearUI Kit minimum, so emit frameworks that are loadable on iOS 14 as documented
+            // by Kotlin/Native's lower Apple target version override.
+            freeCompilerArgs += "-Xoverride-konan-properties=minVersion.ios=14.0"
+        }
+    }
 
     cocoapods {
         name = "PulseKit"
