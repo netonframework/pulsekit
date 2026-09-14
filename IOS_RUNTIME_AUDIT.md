@@ -103,10 +103,12 @@ IMP，发现被后装 SDK 覆盖时形成 `monitor_hook_replaced` 事件并重�
 tracking domains、required-reason API 声明，以及服务端按模块和行为聚合告警。PulseKit 自身的动态
 Framework 也携带 PrivacyInfo.xcprivacy，声明实际使用的 UserDefaults 原因与采集类别。每个随包加载的
 Mach-O 会单独形成 `module_artifact` 事件，携带 App 内相对路径和由 dyld 内存直接读取的 `LC_UUID`；
-服务端把 UUID 存为独立字段，因此同名二进制替换可被区分。
+服务端把 UUID 存为独立字段，因此同名二进制替换可被区分。主程序的 Code Signature 也会被有界解析，
+上报 entitlement 键与已审查的关键值（Team ID、application identifier、推送环境、Associated Domains、
+App Groups、Keychain Groups、get-task-allow）；不调用私有 SecTask API，也不读取整份可执行文件。
 
 当前网络事件包含 method、去掉参数值的目的地、query/header 字段名、Content-Type 和 body 大小；
-尚没有响应状态、耗时和 body 字段结构。权限事件没有最终授权结果；静态清单尚未读取签名
-entitlements；模块清单已有 UUID，但还没有 `__TEXT` 代码指纹和签名证书摘要；
+尚没有响应状态、耗时和 body 字段结构。权限事件没有最终授权结果；模块清单已有 UUID，但还没有
+`__TEXT` 代码指纹和签名证书摘要；
 没有本地数据流匹配；监控也尚未覆盖纯 Swift、C/C++ 和低层网络调用。这些
 边界必须在后台可见，不能把当前版本描述为完整审计。

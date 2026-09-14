@@ -15,6 +15,7 @@ import pulse.core.PulseConfig
 import pulse.runtime.SensitiveApiMonitor
 import pulse.runtime.reportMonitorInstallation
 import pulse.runtime.reportPrivacyDeclarations
+import pulse.runtime.reportSigningDeclarations
 import pulse.runtime.retryPendingHooks
 import pulse.runtime.reportSensitiveApiObservations
 import kotlin.concurrent.atomics.AtomicReference
@@ -128,6 +129,7 @@ object PulseSDK {
                     // needs the client that now exists.
                     runtime.reportMonitorInstallation()
                     runtime.reportPrivacyDeclarations()
+                    runtime.reportSigningDeclarations()
                     launch {
                         while (true) {
                             kotlinx.coroutines.delay(RUNTIME_POLL_MS)
