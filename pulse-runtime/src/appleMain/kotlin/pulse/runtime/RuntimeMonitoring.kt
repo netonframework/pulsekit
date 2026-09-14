@@ -52,19 +52,37 @@ fun Runtime.reportMonitorInstallation(): Int {
  * The event carries what happened and who did it, and no judgement about either — the server
  * decides what any of it means.
  */
+/**
+ * Retry hooks that could not be installed yet and report the watch list if it grew.
+ *
+ * Called on the same tick as the rest of the runtime polling. A framework that loads ten seconds
+ * into a session is hookable ten seconds into a session, and saying so is worth an event: the
+ * difference between "we watched and saw nothing" and "we were not watching" is the whole answer
+ * to a privacy review.
+ */
+fun Runtime.retryPendingHooks(): Int {
+    val added = SensitiveApiMonitor.installPending()
+    if (added > 0) reportMonitorInstallation()
+    return added
+}
+
 fun Runtime.reportSensitiveApiObservations(): Int {
     val observations = SensitiveApiMonitor.drain()
     for (o in observations) {
         recordBehavior(
             name = o.eventName,
             module = o.callerImage,
-            attributes = mapOf(
-                "api_class" to o.className,
-                "api_selector" to o.selector,
+            attributes = buildMap {
+                put("api_class", o.className)
+                put("api_selector", o.selector)
                 // Count, not one event per call: frequency is information, volume is noise.
-                "call_count" to o.count,
-                "first_seen_ms" to o.firstSeenMs,
-            ),
+                put("call_count", o.count)
+                put("first_seen_ms", o.firstSeenMs)
+                // Present only when the API has something worth naming — the destination of a
+                // network request, for instance. Query strings and fragments are already stripped
+                // by the time it gets here; see NetworkDetail.
+                o.detail?.let { put("detail", it) }
+            },
         )
     }
     return observations.size

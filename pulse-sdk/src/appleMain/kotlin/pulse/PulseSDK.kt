@@ -14,6 +14,7 @@ import neton.io.net.runReactor
 import pulse.core.PulseConfig
 import pulse.runtime.SensitiveApiMonitor
 import pulse.runtime.reportMonitorInstallation
+import pulse.runtime.retryPendingHooks
 import pulse.runtime.reportSensitiveApiObservations
 import kotlin.concurrent.atomics.AtomicReference
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
@@ -128,6 +129,7 @@ object PulseSDK {
                     launch {
                         while (true) {
                             kotlinx.coroutines.delay(RUNTIME_POLL_MS)
+                            runtime.retryPendingHooks()
                             runtime.scan()
                             runtime.reportSensitiveApiObservations()
                         }

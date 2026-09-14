@@ -8,6 +8,7 @@ import kotlin.native.concurrent.TransferMode
 import kotlin.native.concurrent.Worker
 import platform.UIKit.UIDevice
 import kotlin.test.Test
+import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
 /**
@@ -82,5 +83,78 @@ class MonitorDispatchTest {
             seen.any { it.eventName == "pasteboard_read" },
             "a clipboard read was not observed; observed=${seen.map { it.eventName }}",
         )
+    }
+
+    @Test
+    fun aNetworkRequestIsObservedWithItsDestination() {
+        SensitiveApiMonitor.install()
+        SensitiveApiMonitor.drain()
+
+        // A task that goes nowhere: the point is that resume() was called, not that it succeeded.
+        // Hooking resume rather than the factory methods means every NSURLSession caller is seen,
+        // whichever overload it used.
+        val url = platform.Foundation.NSURL.URLWithString("https://api.example.test/v1/users?token=secret123#frag")!!
+        platform.Foundation.NSURLSession.sharedSession.dataTaskWithURL(url).resume()
+
+        val seen = SensitiveApiMonitor.drain()
+        val request = seen.firstOrNull { it.eventName == "network_request" }
+        println("DISPATCH network observed=${seen.map { it.eventName }} detail=${request?.detail}")
+        assertTrue(request != null, "a network request was not observed")
+        assertTrue(request.detail != null, "the request had no destination recorded")
+        // The destination is recorded; the credential in the query string is not. A telemetry
+        // store that accumulates tokens is a liability, not a feature.
+        assertTrue(request.detail.contains("api.example.test"), request.detail)
+        assertTrue(!request.detail.contains("secret123"), "the query string was stored: ${request.detail}")
+        assertTrue(!request.detail.contains("frag"), "the fragment was stored: ${request.detail}")
+    }
+
+    @Test
+    fun twoHostsAreTwoObservations() {
+        SensitiveApiMonitor.install()
+        SensitiveApiMonitor.drain()
+
+        for (host in listOf("https://a.example.test/x", "https://b.example.test/y")) {
+            platform.Foundation.NSURLSession.sharedSession
+                .dataTaskWithURL(platform.Foundation.NSURL.URLWithString(host)!!).resume()
+        }
+
+        val requests = SensitiveApiMonitor.drain().filter { it.eventName == "network_request" }
+        // Talking to two different endpoints is two findings, not one with a count of two —
+        // "this SDK contacted an unknown host" is the question being asked.
+        assertEquals(2, requests.size, "hosts were collapsed: ${requests.map { it.detail }}")
+    }
+
+    @Test
+    fun thePhotoLibraryStatusCheckIsObserved() {
+        SensitiveApiMonitor.install()
+        SensitiveApiMonitor.drain()
+
+        // A class method, and the first thing anything touching the user's photos has to call.
+        platform.Photos.PHPhotoLibrary.authorizationStatus()
+
+        val seen = SensitiveApiMonitor.drain()
+        println("DISPATCH photos observed=${seen.map { it.eventName }}")
+        assertTrue(
+            seen.any { it.eventName == "photo_library_status_read" },
+            "a photo library access check was not observed; observed=${seen.map { it.eventName }}",
+        )
+    }
+
+    @Test
+    fun installingTwiceDoesNotChainTheHookToItself() {
+        // Swizzling the same selector twice would store the replacement as "the original", so
+        // every later call would recurse into itself and overflow the stack on a user's device.
+        // Re-installing has to be a no-op per selector.
+        SensitiveApiMonitor.install()
+        SensitiveApiMonitor.install()
+        SensitiveApiMonitor.install()
+        SensitiveApiMonitor.drain()
+
+        UIDevice.currentDevice.identifierForVendor
+
+        val seen = SensitiveApiMonitor.drain()
+        val read = seen.single { it.eventName == "vendor_id_read" }
+        // One call, recorded once — not once per install.
+        assertEquals(1L, read.count)
     }
 }

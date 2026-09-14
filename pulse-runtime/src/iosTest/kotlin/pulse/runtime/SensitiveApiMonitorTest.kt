@@ -44,12 +44,15 @@ class SensitiveApiMonitorTest {
 
     @Test
     fun installHooksTheApisPresentInThisBuild() {
-        val hooked = SensitiveApiMonitor.install()
-        assertTrue(hooked > 0, "nothing was hooked; the ObjC runtime is not reachable")
+        SensitiveApiMonitor.install()
+        // Asserted on the watch list, not on install's return value: hooking is idempotent per
+        // selector, so a second install in the same process legitimately arms nothing new. The
+        // question is what is being watched, not how many hooks this particular call added.
+        val watching = SensitiveApiMonitor.watching.map { it.eventName }.distinct()
+        assertTrue(watching.isNotEmpty(), "nothing is being watched; the ObjC runtime is not reachable")
         // Classes absent from this build are skipped rather than treated as failures — an app that
         // does not link CoreTelephony simply cannot make that call.
-        assertTrue(SensitiveApiMonitor.watching.isNotEmpty())
-        println("MONITOR hooked=$hooked watching=${SensitiveApiMonitor.watching.map { it.eventName }.distinct()}")
+        println("MONITOR watching=$watching")
     }
 
     @Test
