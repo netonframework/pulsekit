@@ -13,6 +13,8 @@ data class LoadedModule(
     val path: String,
     /** Load address, when the platform exposes one; 0 when it does not. */
     val loadAddress: Long = 0L,
+    /** Mach-O LC_UUID on Apple; null on platforms or images that do not expose one. */
+    val imageUuid: String? = null,
 ) {
     /** Last path component, the part worth putting in an event name. */
     val name: String get() = path.substringAfterLast('/')

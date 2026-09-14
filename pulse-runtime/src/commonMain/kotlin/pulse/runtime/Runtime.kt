@@ -50,6 +50,18 @@ class Runtime(private val client: PulseClient) {
                 "bundled_modules" to bundled.take(MAX_REPORTED_MODULES).joinToString(",") { it.name },
             ).toEventAttributes(),
         )
+        val appRoot = modules.firstOrNull()?.path?.substringBeforeLast('/', "").orEmpty()
+        for (module in bundled.take(MAX_REPORTED_MODULES)) {
+            client.emit(
+                EventKind.Runtime,
+                "module_artifact",
+                mapOf(
+                    "relative_path" to module.path.removePrefix(appRoot).removePrefix("/"),
+                    "load_address" to module.loadAddress,
+                ).toEventAttributes(),
+                EventSource(module = module.name, imageUuid = module.imageUuid),
+            )
+        }
         return modules
     }
 
@@ -76,7 +88,7 @@ class Runtime(private val client: PulseClient) {
                 EventKind.Runtime,
                 "module_loaded",
                 mapOf("path" to m.path, "load_address" to m.loadAddress).toEventAttributes(),
-                EventSource(module = m.name),
+                EventSource(module = m.name, imageUuid = m.imageUuid),
             )
         }
         baseline = baseline + fresh.map { it.path }

@@ -27,7 +27,7 @@ class RuntimeTest {
     )
 
     @Test
-    fun baselineReportsOneSummaryNotOneEventPerImage() = runTest {
+    fun baselineReportsOneSummaryAndBundledArtifactEvidence() = runTest {
         val sink = CapturingSink()
         val client = clientWith(sink, this)
         val runtime = Runtime(client)
@@ -35,12 +35,16 @@ class RuntimeTest {
         val modules = runtime.captureBaseline()
         client.flushOnce()
 
-        assertEquals(1, sink.events.size, "the baseline must be one summary event, not one per image")
-        val e = sink.events.single()
+        val summaries = sink.events.filter { it.name == "module_inventory" }
+        assertEquals(1, summaries.size, "the baseline must have exactly one inventory summary")
+        val e = summaries.single()
         assertEquals(EventKind.Runtime, e.kind)
         assertEquals("module_inventory", e.name)
         assertEquals(modules.size.toString(), e.attributes["module_count"]?.toString()?.trim('"'))
         assertTrue(modules.size > 1, "expected a real process inventory, got ${modules.size}")
+        val bundled = bundledModules(modules).take(100)
+        assertEquals(bundled.size, sink.events.count { it.name == "module_artifact" })
+        assertTrue(sink.events.filter { it.name == "module_artifact" }.all { it.source.module != null })
     }
 
     @Test
@@ -108,8 +112,8 @@ class RuntimeTest {
         Runtime(cb).captureBaseline()
         cb.flushOnce()
 
-        val da = a.events.single().attributes["inventory_digest"].toString()
-        val db = b.events.single().attributes["inventory_digest"].toString()
+        val da = a.events.single { it.name == "module_inventory" }.attributes["inventory_digest"].toString()
+        val db = b.events.single { it.name == "module_inventory" }.attributes["inventory_digest"].toString()
         assertEquals(da, db, "inventory digest is not stable across instances")
         assertTrue(da.trim('"').length == 16, "expected a 16-hex-char digest, got $da")
     }
