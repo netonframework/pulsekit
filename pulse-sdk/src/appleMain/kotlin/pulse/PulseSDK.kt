@@ -14,6 +14,7 @@ import neton.io.net.runReactor
 import pulse.core.PulseConfig
 import pulse.runtime.SensitiveApiMonitor
 import pulse.runtime.reportMonitorInstallation
+import pulse.runtime.reportPrivacyDeclarations
 import pulse.runtime.retryPendingHooks
 import pulse.runtime.reportSensitiveApiObservations
 import kotlin.concurrent.atomics.AtomicReference
@@ -126,6 +127,7 @@ object PulseSDK {
                     // Already armed above; this only reports what ended up being watched, which
                     // needs the client that now exists.
                     runtime.reportMonitorInstallation()
+                    runtime.reportPrivacyDeclarations()
                     launch {
                         while (true) {
                             kotlinx.coroutines.delay(RUNTIME_POLL_MS)
