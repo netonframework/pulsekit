@@ -14,6 +14,12 @@ import platform.posix.fprintf
 import platform.posix.getenv
 import platform.posix.mkdir
 
+actual fun defaultPulseStorageDir(projectId: String): String {
+    val state = getenv("XDG_STATE_HOME")?.toKString()?.takeIf { it.isNotEmpty() }
+    val base = state ?: (getenv("HOME")?.toKString()?.plus("/.local/state") ?: "/tmp")
+    return "$base/pulsekit/$projectId"
+}
+
 /**
  * A `key=value` file under `$XDG_STATE_HOME` (or `~/.local/state`). Linux is the server/dev host
  * for this SDK rather than an end-user device, so this exists to keep the ids stable across

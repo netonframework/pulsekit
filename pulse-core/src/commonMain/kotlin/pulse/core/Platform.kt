@@ -6,6 +6,9 @@ expect fun nowMillis(): Long
 /** A fresh unique id (uuid-like) for events, sessions, installations. */
 expect fun newId(): String
 
+/** Per-app durable directory for the event outbox and next-launch crash record. */
+expect fun defaultPulseStorageDir(projectId: String): String
+
 /**
  * A small key/value store that survives process restarts, used for the device and installation
  * ids. NSUserDefaults on Apple; a file under the user's home on Linux (server/dev hosts).

@@ -16,6 +16,8 @@ import kotlinx.serialization.Serializable
 data class EventBatch(
     val identity: WireIdentity,
     val events: List<Event>,
+    /** Stable across retries of one durable outbox row. */
+    val batchId: String? = null,
 )
 
 /**

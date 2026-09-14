@@ -1,0 +1,52 @@
+CREATE TABLE pulse_outbox (
+    sequence INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+    batch_id TEXT NOT NULL UNIQUE,
+    payload BLOB NOT NULL,
+    compression INTEGER NOT NULL DEFAULT 0,
+    event_count INTEGER NOT NULL,
+    created_at INTEGER NOT NULL,
+    next_attempt_at INTEGER NOT NULL,
+    attempt_count INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE INDEX pulse_outbox_due ON pulse_outbox(next_attempt_at, sequence);
+
+enqueue:
+INSERT INTO pulse_outbox(
+    batch_id, payload, compression, event_count, created_at, next_attempt_at, attempt_count
+) VALUES (?, ?, ?, ?, ?, ?, 0);
+
+oldestDue:
+SELECT sequence, batch_id, payload, compression, event_count, created_at,
+       next_attempt_at, attempt_count
+FROM pulse_outbox
+WHERE sequence = (SELECT MIN(sequence) FROM pulse_outbox)
+  AND next_attempt_at <= ?
+LIMIT 1;
+
+acknowledge:
+DELETE FROM pulse_outbox WHERE sequence = ?;
+
+markRetry:
+UPDATE pulse_outbox
+SET attempt_count = attempt_count + 1,
+    next_attempt_at = ?
+WHERE sequence = ?;
+
+deleteExpired:
+DELETE FROM pulse_outbox WHERE created_at < ?;
+
+deleteOldest:
+DELETE FROM pulse_outbox
+WHERE sequence IN (
+    SELECT sequence FROM pulse_outbox ORDER BY sequence ASC LIMIT ?
+);
+
+countBatches:
+SELECT COUNT(*) FROM pulse_outbox;
+
+totalPayloadBytes:
+SELECT COALESCE(SUM(length(payload)), 0) FROM pulse_outbox;
+
+allBatchIds:
+SELECT batch_id FROM pulse_outbox ORDER BY sequence ASC;

@@ -24,6 +24,7 @@ class PulseClient(
     private val scope: CoroutineScope,
     private var sink: EventSink = NoopEventSink,
     private val codec: EventCodec = JsonEventCodec,
+    private val outbox: EventOutbox = InMemoryEventOutbox(),
 ) {
     private val buffer = EventBuffer(config.bufferCapacity)
     private val wake = Channel<Unit>(Channel.CONFLATED)
@@ -38,6 +39,8 @@ class PulseClient(
     fun start() {
         if (loop != null) return
         loop = scope.launch { flushLoop() }
+        // Recover rows left by an earlier process before waiting for a new event or timer tick.
+        wake.trySend(Unit)
     }
 
     /** Attach the real transport sink (e.g. msgtrans) after construction. */
@@ -63,17 +66,39 @@ class PulseClient(
         }
     }
 
-    /** Drain one batch and deliver it; on failure the batch is requeued for the next attempt. */
+    /**
+     * Commit newly collected events to the durable outbox, then attempt its oldest due batch.
+     * A msgtrans response is the only operation allowed to delete a row.
+     */
     suspend fun flushOnce() {
+        val now = nowMillis()
+        outbox.prune(now)
         val batch = buffer.drain(config.batchMaxEvents)
-        if (batch.isEmpty()) return
-        try {
-            // Identity is read at flush time, so a batch buffered before identify() still carries
-            // the user id once it is known.
-            sink.send(codec.encode(EventBatch(identity.toWire(config), batch)))
-        } catch (t: Throwable) {
-            buffer.requeueFront(batch) // keep for retry; never lose on a transient failure
+        if (batch.isNotEmpty()) {
+            val batchId = newId()
+            val encoded = codec.encode(EventBatch(identity.toWire(config), batch, batchId))
+            // Compression 0 = none until msgtrans-kotlin's zstd/zlib transform is wired in.
+            outbox.enqueue(batchId, encoded, compression = 0, eventCount = batch.size, nowMs = now)
         }
+
+        val pending = outbox.oldestDue(now) ?: return
+        try {
+            sink.send(pending.payload)
+            outbox.acknowledge(pending.sequence)
+            // Drain recovered backlog without waiting another flush interval. Conflation keeps
+            // this at one wake-up even when producers are also active.
+            if (outbox.hasPending()) wake.trySend(Unit)
+        } catch (t: Throwable) {
+            outbox.markRetry(pending.sequence, now + retryDelay(pending.attemptCount))
+        }
+    }
+
+    private fun retryDelay(attemptCount: Int): Long {
+        var delay = config.retryBaseDelayMs.coerceAtLeast(0)
+        repeat(attemptCount.coerceIn(0, 16)) {
+            delay = (delay * 2).coerceAtMost(config.retryMaxDelayMs)
+        }
+        return delay.coerceAtMost(config.retryMaxDelayMs)
     }
 
     /**
@@ -108,6 +133,7 @@ class PulseClient(
         flushOnce()
         loop?.cancel()
         sink.close()
+        outbox.close()
     }
 
 }

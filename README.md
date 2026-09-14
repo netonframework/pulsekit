@@ -69,8 +69,9 @@ instead of the umbrella `Pulse` entry.
 
 A batch is sent as one msgtrans **request** with biz type `1` (`EVENT_BATCH_UPLOAD`); the server's reply confirms
 receipt into the pipeline. `request` gives delivery confirmation and backpressure; a failed send
-requeues the batch in the bounded ring buffer (stability over completeness — oldest events drop
-when the buffer is full). A POSIX crash handler cannot safely run Kotlin allocation, coroutine, or
+remains in a bounded SQLDelight/SQLite outbox and is retried in FIFO order after backoff or the next
+process launch. A row is deleted only after the matching msgtrans response. A POSIX crash handler
+cannot safely run Kotlin allocation, coroutine, or
 network code, so it writes a preallocated crash record and reports that record through the normal
 pipeline on the next launch.
 
@@ -102,8 +103,9 @@ Current boundaries:
 
 - `userId` is optional host-provided identity, like the account binding API of an analytics SDK;
   PulseKit does not know or depend on an app's authentication model.
-- Pending analytics/APM events are bounded in memory but are not yet persisted across process
-  termination. Crash records are persisted separately and reported on the next launch.
+- Encoded event batches are persisted in a bounded SQLDelight outbox across process termination.
+  Events still waiting for the next batch flush remain in the bounded memory buffer; app lifecycle
+  flushing will narrow that final window further.
 - `batchMaxBytes` is part of the configuration but is not yet enforced by the batching pipeline;
   event count and total buffered event count are bounded today.
 - Apple runtime observation covers the currently registered Objective-C API signatures. Android

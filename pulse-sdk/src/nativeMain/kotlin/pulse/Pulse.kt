@@ -7,6 +7,9 @@ import pulse.apm.CrashReporter
 import pulse.core.Identity
 import pulse.core.PulseClient
 import pulse.core.PulseConfig
+import pulse.core.InMemoryEventOutbox
+import pulse.core.SqlDelightEventOutbox
+import pulse.core.defaultPulseStorageDir
 import pulse.core.UpdateAction
 import pulse.core.UpdateInfo
 import pulse.core.persistentDeviceId
@@ -57,7 +60,23 @@ class Pulse private constructor(
                 installationId = persistentInstallationId(),
                 deviceId = persistentDeviceId(),
             )
-            val client = PulseClient(config, identity, scope)
+            val dir = storageDirFor(config)
+            // Telemetry must never prevent the host from starting. Disk-full/corrupt-database
+            // failures fall back to the bounded in-memory outbox for this run.
+            val outbox = runCatching {
+                SqlDelightEventOutbox(
+                    dir,
+                    maxBatches = config.outboxMaxBatches,
+                    maxBytes = config.outboxMaxBytes,
+                    maxAgeMs = config.outboxMaxAgeMs,
+                )
+            }.getOrElse {
+                InMemoryEventOutbox(
+                    config.outboxMaxBatches.coerceIn(1, Int.MAX_VALUE.toLong()).toInt(),
+                    config.outboxMaxAgeMs.coerceAtLeast(1),
+                )
+            }
+            val client = PulseClient(config, identity, scope, outbox = outbox)
             client.attachSink(MsgTransEventSink.connect(scope, config))
             client.start()
 
@@ -70,7 +89,6 @@ class Pulse private constructor(
             val pulse = Pulse(client, Analytics(client), apm, runtime, update)
 
             if (config.apm) {
-                val dir = storageDirFor(config)
                 // Report last run's crash first, then take ownership of the record file.
                 for (crash in CrashReporter.drainPending(dir)) {
                     apm.recordCrash(
@@ -98,6 +116,6 @@ class Pulse private constructor(
         }
 
         private fun storageDirFor(config: PulseConfig): String =
-            config.storageDir ?: "/tmp/pulsekit-${config.projectId}"
+            config.storageDir ?: defaultPulseStorageDir(config.projectId)
     }
 }

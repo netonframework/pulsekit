@@ -59,7 +59,10 @@ class PulseCoreTest {
             override suspend fun close() {}
         }
         val client = PulseClient(
-            PulseConfig(projectId = "t", host = "127.0.0.1", batchMaxEvents = 100),
+            PulseConfig(
+                projectId = "t", host = "127.0.0.1", batchMaxEvents = 100,
+                retryBaseDelayMs = 0, retryMaxDelayMs = 0,
+            ),
             Identity("t", "i", "d"), this, sink,
         )
         repeat(5) { client.emit(EventKind.Analytics, "e$it") }
@@ -80,7 +83,10 @@ class PulseCoreTest {
             override suspend fun close() {}
         }
         val client = PulseClient(
-            PulseConfig(projectId = "t", host = "127.0.0.1", batchMaxEvents = 100),
+            PulseConfig(
+                projectId = "t", host = "127.0.0.1", batchMaxEvents = 100,
+                retryBaseDelayMs = 0, retryMaxDelayMs = 0,
+            ),
             Identity("t", "i", "d"), this, sink,
         )
         repeat(3) { client.emit(EventKind.Error, "err$it") }

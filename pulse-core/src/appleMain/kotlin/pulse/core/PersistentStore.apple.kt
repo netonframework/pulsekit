@@ -1,6 +1,10 @@
 package pulse.core
 
 import platform.Foundation.NSUserDefaults
+import platform.Foundation.NSHomeDirectory
+
+actual fun defaultPulseStorageDir(projectId: String): String =
+    "${NSHomeDirectory()}/Library/Application Support/PulseKit/$projectId"
 
 /**
  * NSUserDefaults, which is per-app, backed up with the app and cleared on uninstall — the right

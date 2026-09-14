@@ -17,12 +17,18 @@ data class PulseConfig(
     val batchMaxEvents: Int = 64,
     val batchMaxBytes: Int = 64 * 1024,
     val flushIntervalMs: Long = 5_000,
-    // Local ring buffer cap; oldest events drop when full (stability over completeness).
+    // Pre-encoding memory buffer cap; oldest events drop when full (stability over completeness).
     val bufferCapacity: Int = 4_096,
+    /** Durable encoded batches retained across process restarts. */
+    val outboxMaxBatches: Long = 4_096,
+    val outboxMaxBytes: Long = 32L * 1024 * 1024,
+    val outboxMaxAgeMs: Long = 7L * 24 * 60 * 60 * 1_000,
+    /** First retry delay; subsequent failures use capped exponential backoff. */
+    val retryBaseDelayMs: Long = 1_000,
+    val retryMaxDelayMs: Long = 5L * 60 * 1_000,
     /**
-     * Where the SDK keeps its few on-disk artefacts (currently only the crash record). Defaults to
-     * a per-project directory under the system temp dir; a host with its own sandbox layout should
-     * point this at a directory it controls and that survives restarts.
+     * Where the SDK keeps its SQLite outbox and crash record. Defaults to a per-project directory
+     * under Application Support on Apple platforms and the user state directory on Linux.
      */
     val storageDir: String? = null,
     /**

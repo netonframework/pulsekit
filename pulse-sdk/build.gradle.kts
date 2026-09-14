@@ -22,6 +22,9 @@ kotlin {
         framework {
             baseName = "PulseKit"
             isStatic = false
+            // SQLDelight's native driver uses the system SQLite library. The dependency metadata
+            // does not propagate this linker option through pulse-core into the final framework.
+            linkerOpts("-lsqlite3")
         }
     }
 
