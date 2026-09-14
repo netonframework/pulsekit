@@ -141,12 +141,14 @@ object PulseSDK {
         runtime: Boolean = true,
         packageName: String? = null,
         buildNumber: Long = 0,
+        appVersion: String? = null,
     ) = start(
         PulseConfig(
             projectId = projectId, host = host, port = port, runtime = runtime,
             // Fixed to "ios" here: this facade only exists on Apple targets, so asking the host to
             // pass its own platform would only create a way to get it wrong.
-            platform = "ios", packageName = packageName, buildNumber = buildNumber,
+            platform = "ios", packageName = packageName,
+            buildNumber = buildNumber, appVersion = appVersion,
         ),
     )
 

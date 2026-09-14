@@ -70,7 +70,7 @@ class PulseClient(
         try {
             // Identity is read at flush time, so a batch buffered before identify() still carries
             // the user id once it is known.
-            sink.send(codec.encode(EventBatch(identity.toWire(), batch)))
+            sink.send(codec.encode(EventBatch(identity.toWire(config), batch)))
         } catch (t: Throwable) {
             buffer.requeueFront(batch) // keep for retry; never lose on a transient failure
         }

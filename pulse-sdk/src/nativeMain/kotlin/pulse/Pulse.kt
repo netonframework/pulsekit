@@ -80,6 +80,11 @@ class Pulse private constructor(
                         attributes = mapOf(
                             "crashed_session_id" to crash.sessionId,
                             "crashed_at_ms" to crash.timestampMs,
+                            // The slide travels with the frames: without it the server cannot
+                            // turn these runtime addresses back into anything a symbol table
+                            // can resolve.
+                            "image_slide" to crash.imageSlide,
+                            "frames" to crash.frames.joinToString(",") { it.toString() },
                         ),
                     )
                 }

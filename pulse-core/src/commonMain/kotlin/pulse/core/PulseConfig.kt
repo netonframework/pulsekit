@@ -35,4 +35,6 @@ data class PulseConfig(
     val platform: String? = null,
     val packageName: String? = null,
     val buildNumber: Long = 0,
+    /** Display version, e.g. "1.4.2"; reported alongside the build number for readability. */
+    val appVersion: String? = null,
 )

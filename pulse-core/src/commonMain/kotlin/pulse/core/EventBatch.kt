@@ -30,7 +30,18 @@ data class WireIdentity(
     val deviceId: String,
     /** Null until the host calls identify(); MAU de-dupes on it when present. */
     val userId: String? = null,
+    /**
+     * The build this session is running. Carried on the identity rather than per event because it
+     * is a property of the run, and because a crash is unreadable without it: symbols are stored
+     * per build, so a stack with no build number cannot be resolved against anything.
+     */
+    val appVersion: String? = null,
+    val buildNumber: Long = 0,
 )
 
 /** The wire projection of this identity. */
 fun Identity.toWire(): WireIdentity = WireIdentity(projectId, installationId, deviceId, userId)
+
+/** The wire projection, including the build identity the config carries. */
+fun Identity.toWire(config: PulseConfig): WireIdentity =
+    WireIdentity(projectId, installationId, deviceId, userId, config.appVersion, config.buildNumber)

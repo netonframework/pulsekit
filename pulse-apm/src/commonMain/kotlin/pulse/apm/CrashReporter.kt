@@ -21,6 +21,14 @@ data class PendingCrash(
     val timestampMs: Long,
     /** Session the crashed run belonged to, so the crash joins its other events server-side. */
     val sessionId: String,
+    /**
+     * The main image's load slide at crash time. Subtracting it from a frame address gives the
+     * static address a symbol table is written against; without it the addresses are meaningless,
+     * because ASLR maps the same build somewhere different on every launch.
+     */
+    val imageSlide: Long = 0,
+    /** Return addresses, innermost first. Empty when the platform cannot capture a backtrace. */
+    val frames: List<Long> = emptyList(),
 )
 
 /**

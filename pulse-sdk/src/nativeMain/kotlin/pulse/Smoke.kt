@@ -26,7 +26,8 @@ fun pulseSmokeMain(args: Array<String>) {
         val pulse = Pulse.start(this, PulseConfig(
             projectId = "vip-mall", host = host, port = port,
             runtime = true,
-            platform = "ios", packageName = "com.example.vipmall", buildNumber = buildNumber,
+            platform = "ios", packageName = "com.example.vipmall",
+            buildNumber = buildNumber, appVersion = "1.0.0-smoke",
             batchMaxEvents = 1000, flushIntervalMs = 60_000
         ))
         // The update check has already run inside start(); report what the server said.

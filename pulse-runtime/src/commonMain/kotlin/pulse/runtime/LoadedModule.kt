@@ -25,3 +25,23 @@ data class LoadedModule(
  * Order is the loader's, not sorted, so a diff against an earlier snapshot reflects load order.
  */
 expect fun loadedModules(): List<LoadedModule>
+
+/**
+ * The images that ship inside the application itself, rather than with the operating system.
+ *
+ * This is the set an audit actually cares about: the app's own embedded frameworks and whatever
+ * third-party SDKs came with them. A process has several hundred system libraries loaded and they
+ * are identical on every install, so reporting them is noise the server pays to store.
+ *
+ * "Inside the application" is decided by path against the main executable's own directory rather
+ * than by pattern-matching system prefixes. Those prefixes differ between a device, a simulator and
+ * a desktop host, and a list of them is a list that goes stale; the loader's own answer for where
+ * this binary lives does not.
+ */
+fun bundledModules(all: List<LoadedModule> = loadedModules()): List<LoadedModule> {
+    // Index 0 is the main executable in the loader's table on every platform this runs on.
+    val mainPath = all.firstOrNull()?.path ?: return emptyList()
+    val root = mainPath.substringBeforeLast('/', "")
+    if (root.isEmpty()) return emptyList()
+    return all.filter { it.path.startsWith("$root/") || it.path == mainPath }
+}

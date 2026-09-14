@@ -31,14 +31,23 @@ class Runtime(private val client: PulseClient) {
     fun captureBaseline(): List<LoadedModule> {
         val modules = loadedModules()
         baseline = modules.mapTo(HashSet()) { it.path }
+
+        // The bundled images are named individually because they are the auditable surface: the
+        // app's own frameworks and the third-party SDKs shipped with them. The system libraries
+        // are only counted and digested — there are hundreds, they are identical on every install,
+        // and uploading them every launch is noise the server pays to store.
+        val bundled = bundledModules(modules)
         client.emit(
             EventKind.Runtime,
             "module_inventory",
             mapOf(
                 "module_count" to modules.size,
+                "bundled_count" to bundled.size,
                 // A stable digest of the whole set: the server can spot two installs that differ
                 // without the client uploading every path.
                 "inventory_digest" to inventoryDigest(baseline),
+                // Bounded: a pathological bundle must not turn one event into a megabyte.
+                "bundled_modules" to bundled.take(MAX_REPORTED_MODULES).joinToString(",") { it.name },
             ).toEventAttributes(),
         )
         return modules
@@ -78,6 +87,13 @@ class Runtime(private val client: PulseClient) {
         client.emit(EventKind.Runtime, name, attributes.toEventAttributes(), EventSource(module = module))
 
     private companion object {
+        /**
+         * Cap on named images in one inventory event. Real bundles hold tens of frameworks; a
+         * number far past that is a sign of something wrong, and truncating is better than
+         * emitting an event the transport has to fight to deliver.
+         */
+        const val MAX_REPORTED_MODULES = 100
+
         /** FNV-1a over the sorted paths: order-independent, cheap, and stable across launches. */
         fun inventoryDigest(paths: Set<String>): String {
             var hash = 0xcbf29ce484222325UL

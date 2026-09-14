@@ -3,6 +3,7 @@
 package pulse.apm
 
 import kotlinx.cinterop.ByteVar
+import kotlinx.cinterop.COpaquePointerVar
 import kotlinx.cinterop.CPointer
 import kotlinx.cinterop.ExperimentalForeignApi
 import kotlinx.cinterop.allocArray
@@ -63,9 +64,20 @@ actual object CrashReporter {
     private var kTs: CPointer<ByteVar>? = null
     private var kSession: CPointer<ByteVar>? = null
     private var kNewline: CPointer<ByteVar>? = null
+    private var kSlide: CPointer<ByteVar>? = null
+    private var kFrames: CPointer<ByteVar>? = null
+    private var kComma: CPointer<ByteVar>? = null
+    /** Frame addresses are written into this; allocated up front like everything else. */
+    private var frameBuf: CPointer<COpaquePointerVar>? = null
     private var installed = false
 
     private const val RECORD_NAME = "crash.record"
+
+    /**
+     * Frames captured per crash. Deep enough to reach past the runtime's own frames into
+     * application code, shallow enough that the write stays one small syscall on a dying process.
+     */
+    private const val MAX_FRAMES = 64
 
     actual fun install(storageDir: String, sessionId: String) {
         if (installed) return
@@ -81,6 +93,10 @@ actual object CrashReporter {
         kTs = cstr("\nts=")
         kSession = cstr("\nsession=")
         kNewline = cstr("\n")
+        kSlide = cstr("\nslide=")
+        kFrames = cstr("\nframes=")
+        kComma = cstr(",")
+        frameBuf = nativeHeap.allocArray<COpaquePointerVar>(MAX_FRAMES)
         installed = true
 
         for (sig in intArrayOf(SIGSEGV, SIGABRT, SIGBUS, SIGILL, SIGFPE, SIGTRAP)) {
@@ -104,6 +120,22 @@ actual object CrashReporter {
             writeInt(fd, time(null).toLong(), scr)
             writeC(fd, kSession)
             sessionBuf?.let { write(fd, it, sessionLen.toULong()) }
+
+            // The addresses on their own mean nothing once the process is gone: the same build
+            // maps at a different address every launch. The slide is what turns a runtime address
+            // back into the static one a symbol table is written against, so it has to be captured
+            // here, with the frames, and not reconstructed later.
+            writeC(fd, kSlide)
+            writeInt(fd, imageSlide(), scr)
+            writeC(fd, kFrames)
+            val fb = frameBuf
+            if (fb != null) {
+                val n = captureBacktrace(fb, MAX_FRAMES)
+                for (i in 0 until n) {
+                    if (i > 0) writeC(fd, kComma)
+                    writeInt(fd, fb[i]?.rawValue?.toLong() ?: 0L, scr)
+                }
+            }
             writeC(fd, kNewline)
             fsync(fd)           // the process is about to die; get the bytes to disk
             close(fd)
@@ -149,6 +181,8 @@ actual object CrashReporter {
             message = "process terminated by signal $sig",
             timestampMs = ts * 1000L,
             sessionId = fields["session"].orEmpty(),
+            imageSlide = fields["slide"]?.toLongOrNull() ?: 0L,
+            frames = fields["frames"]?.split(',')?.mapNotNull { it.trim().toLongOrNull() } ?: emptyList(),
         )
     }
 
