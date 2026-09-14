@@ -32,4 +32,41 @@ class PrivacyDeclarationInventoryTest {
         check(evidence.values.none { it.toString().contains("secret-bearing") })
         check(evidence.values.none { it.toString().contains("private-callback") })
     }
+
+    @Test
+    fun parsesPrivacyManifestSemanticsWithItsSourceBundle() {
+        val manifest = PrivacyDeclarationInventory.parseManifest(
+            "com.vendor.ads",
+            mapOf(
+                "NSPrivacyTracking" to true,
+                "NSPrivacyTrackingDomains" to listOf("TRACK.EXAMPLE.COM"),
+                "NSPrivacyCollectedDataTypes" to listOf(
+                    mapOf(
+                        "NSPrivacyCollectedDataType" to "NSPrivacyCollectedDataTypeEmailAddress",
+                        "NSPrivacyCollectedDataTypeLinked" to true,
+                        "NSPrivacyCollectedDataTypeTracking" to false,
+                        "NSPrivacyCollectedDataTypePurposes" to listOf("NSPrivacyCollectedDataTypePurposeAnalytics"),
+                    ),
+                ),
+                "NSPrivacyAccessedAPITypes" to listOf(
+                    mapOf(
+                        "NSPrivacyAccessedAPIType" to "NSPrivacyAccessedAPICategoryUserDefaults",
+                        "NSPrivacyAccessedAPITypeReasons" to listOf("CA92.1"),
+                    ),
+                ),
+            ),
+        )
+
+        assertEquals("com.vendor.ads", manifest.bundle)
+        assertEquals(true, manifest.tracking)
+        assertEquals(listOf("track.example.com"), manifest.trackingDomains)
+        assertEquals(
+            listOf("NSPrivacyAccessedAPICategoryUserDefaults:CA92.1"),
+            manifest.accessedApis,
+        )
+        assertEquals(
+            listOf("NSPrivacyCollectedDataTypeEmailAddress:linked=true:tracking=false:purposes=NSPrivacyCollectedDataTypePurposeAnalytics"),
+            manifest.collectedData,
+        )
+    }
 }

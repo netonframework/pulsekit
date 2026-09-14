@@ -48,3 +48,28 @@ tasks.withType<org.jetbrains.kotlin.gradle.targets.native.tasks.KotlinNativeSimu
         providers.environmentVariable(key).orNull?.let { environment("SIMCTL_CHILD_$key", it) }
     }
 }
+
+// Kotlin/Native does not currently copy arbitrary source-set resources into a framework bundle.
+// Apple requires a dynamic SDK which uses a required-reason API to carry its own manifest, so put
+// the reviewed file into every produced PulseKit.framework after linking. syncFramework copies that
+// completed framework into CocoaPods, preserving the manifest in the final app.
+val applePrivacyManifest = layout.projectDirectory.file("src/appleMain/resources/PrivacyInfo.xcprivacy")
+tasks.matching { it.name.startsWith("link") && it.name.contains("Framework") }.configureEach {
+    inputs.file(applePrivacyManifest)
+    doLast {
+        outputs.files.files
+            .asSequence()
+            .flatMap { output ->
+                when {
+                    output.isDirectory && output.extension == "framework" -> sequenceOf(output)
+                    output.isDirectory -> output.walkTopDown()
+                        .filter { it.isDirectory && it.extension == "framework" }
+                    else -> emptySequence()
+                }
+            }
+            .distinctBy { it.absolutePath }
+            .forEach { framework ->
+                applePrivacyManifest.asFile.copyTo(framework.resolve("PrivacyInfo.xcprivacy"), overwrite = true)
+            }
+    }
+}

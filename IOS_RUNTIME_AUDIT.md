@@ -99,10 +99,12 @@ IMP，发现被后装 SDK 覆盖时形成 `monitor_hook_replaced` 事件并重�
 
 当前版本已经实现：随包镜像清单和后加载镜像、调用模块归因、部分零/单参数 Objective-C 敏感 API、
 相册权限入口、`NSURLSessionTask.resume` 目的地、监控安装覆盖上报、最终 App 的 UsageDescription、
-后台模式、URL scheme 数量与主包/Framework Privacy Manifest 存在性清单，以及服务端按模块和行为聚合告警。
+后台模式、URL scheme 数量、主包/Framework Privacy Manifest 的来源及具体 collected data、tracking、
+tracking domains、required-reason API 声明，以及服务端按模块和行为聚合告警。PulseKit 自身的动态
+Framework 也携带 PrivacyInfo.xcprivacy，声明实际使用的 UserDefaults 原因与采集类别。
 
 当前网络事件包含 method、去掉参数值的目的地、query/header 字段名、Content-Type 和 body 大小；
-尚没有响应状态、耗时和 body 字段结构。权限事件没有最终授权结果；静态清单还没有解析 Privacy
-Manifest 的具体声明或签名 entitlements；模块清单只有名称和路径，没有 UUID、代码指纹或签名；
+尚没有响应状态、耗时和 body 字段结构。权限事件没有最终授权结果；静态清单尚未读取签名
+entitlements；模块清单只有名称和路径，没有 UUID、代码指纹或签名；
 没有本地数据流匹配；监控也尚未覆盖纯 Swift、C/C++ 和低层网络调用。这些
 边界必须在后台可见，不能把当前版本描述为完整审计。
