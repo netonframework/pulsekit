@@ -12,10 +12,9 @@ import platform.Foundation.*
  * Reads the destination of a network request, in a form that is safe to store.
  *
  * A full URL routinely carries session tokens, signed parameters and personal data in its query
- * string. This module's own rule is that attributes hold metadata and never secrets, so the query
- * and fragment are dropped and only `scheme://host/path` is kept. That still answers the question
- * an audit asks — which SDK talked to whom, and about what kind of endpoint — without turning the
- * telemetry store into a place where credentials accumulate.
+ * string. This module's own rule is that attributes hold metadata and never secrets, so query
+ * values and fragments are dropped. Request method, field names, content type and byte counts are
+ * retained because they describe the transfer without copying its contents into telemetry.
  */
 internal object NetworkDetail {
 
