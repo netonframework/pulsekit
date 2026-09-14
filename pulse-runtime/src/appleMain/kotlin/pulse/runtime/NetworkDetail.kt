@@ -96,5 +96,6 @@ internal object NetworkDetail {
 
     private const val MAX_FIELDS = 32
     private const val MAX_NAME_LENGTH = 80
-    private const val MAX_DETAIL_LENGTH = 2_048
+    // Server alert detail is VARCHAR(512); leave room for any future display prefix.
+    private const val MAX_DETAIL_LENGTH = 480
 }

@@ -26,6 +26,10 @@ labels events as first/system/third-party — the server attributes them.
 
 ## Usage
 
+Create an App in the Pulse console first, then embed the generated App ID in the host. The App ID
+is a public routing identifier, not a secret. On iOS the host also reports its real bundle ID; the
+server applies that App's `strict`, `allowlist`, or `any` package policy.
+
 ```kotlin
 runReactor {
     val pulse = Pulse.start(this, PulseConfig(
@@ -41,6 +45,22 @@ runReactor {
     pulse.stop()
 }
 ```
+
+Swift hosts should use the Objective-C-stable facade:
+
+```swift
+PulseSDK.shared.startWithAppId(
+    appId: "pulse_xxxxxxxxxxxxxxxxxxxxxxxx",
+    host: "collect.example.com",
+    port: 9600,
+    runtime: true,
+    packageName: Bundle.main.bundleIdentifier,
+    buildNumber: 42,
+    appVersion: "1.2.0"
+)
+```
+
+The old `start(projectId:...)` selector remains available for already shipped integrations.
 
 Apps that want link-time stripping can build a `PulseClient` with only the capabilities they need
 instead of the umbrella `Pulse` entry.

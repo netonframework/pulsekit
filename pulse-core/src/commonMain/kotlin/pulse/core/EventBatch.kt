@@ -25,6 +25,7 @@ data class EventBatch(
  */
 @Serializable
 data class WireIdentity(
+    /** Stable App ID/AppKey issued by the Pulse console. Kept as projectId on wire for compatibility. */
     val projectId: String,
     val installationId: String,
     val deviceId: String,
@@ -37,6 +38,9 @@ data class WireIdentity(
      */
     val appVersion: String? = null,
     val buildNumber: Long = 0,
+    /** Runtime package identity used by the server's per-App package policy. */
+    val platform: String? = null,
+    val packageName: String? = null,
 )
 
 /** The wire projection of this identity. */
@@ -44,4 +48,13 @@ fun Identity.toWire(): WireIdentity = WireIdentity(projectId, installationId, de
 
 /** The wire projection, including the build identity the config carries. */
 fun Identity.toWire(config: PulseConfig): WireIdentity =
-    WireIdentity(projectId, installationId, deviceId, userId, config.appVersion, config.buildNumber)
+    WireIdentity(
+        projectId = projectId,
+        installationId = installationId,
+        deviceId = deviceId,
+        userId = userId,
+        appVersion = config.appVersion,
+        buildNumber = config.buildNumber,
+        platform = config.platform,
+        packageName = config.packageName,
+    )

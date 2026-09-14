@@ -37,6 +37,21 @@ class PulseCoreTest {
     }
 
     @Test
+    fun wireIdentityCarriesTheRuntimePackageForServerPolicy() {
+        val config = PulseConfig(
+            projectId = "pulse_app_123",
+            host = "127.0.0.1",
+            platform = "ios",
+            packageName = "com.example.resigned",
+        )
+        val wire = Identity(config.projectId, "install", "device").toWire(config)
+        assertEquals("pulse_app_123", config.appId)
+        assertEquals("pulse_app_123", wire.projectId)
+        assertEquals("ios", wire.platform)
+        assertEquals("com.example.resigned", wire.packageName)
+    }
+
+    @Test
     fun clientFlushesBatchToSink() = runTest {
         val sent = mutableListOf<ByteArray>()
         val sink = object : EventSink {

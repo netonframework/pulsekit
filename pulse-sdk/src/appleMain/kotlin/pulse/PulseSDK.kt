@@ -192,6 +192,31 @@ object PulseSDK {
     )
 
     /**
+     * Preferred iOS entry point. App ID is created by the Pulse console and embedded in the host
+     * app; it identifies the event stream but is not an authentication secret.
+     *
+     * The older `start(projectId:...)` selector remains available so already integrated builds do
+     * not break while hosts move to the App ID terminology.
+     */
+    fun startWithAppId(
+        appId: String,
+        host: String,
+        port: Int = 9600,
+        runtime: Boolean = true,
+        packageName: String? = null,
+        buildNumber: Long = 0,
+        appVersion: String? = null,
+    ) = start(
+        projectId = appId,
+        host = host,
+        port = port,
+        runtime = runtime,
+        packageName = packageName,
+        buildNumber = buildNumber,
+        appVersion = appVersion,
+    )
+
+    /**
      * Wait up to [timeoutMillis] for the startup update check to come back.
      *
      * Returns [UpdateAction.None] on timeout, not null: a host calling this is about to decide

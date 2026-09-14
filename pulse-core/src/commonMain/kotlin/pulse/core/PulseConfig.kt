@@ -6,6 +6,7 @@ package pulse.core
  * frequency.
  */
 data class PulseConfig(
+    /** Stable App ID/AppKey created in the Pulse console; it is public identification, not a secret. */
     val projectId: String,
     val host: String,
     val port: Int = 9600,
@@ -37,4 +38,7 @@ data class PulseConfig(
     val buildNumber: Long = 0,
     /** Display version, e.g. "1.4.2"; reported alongside the build number for readability. */
     val appVersion: String? = null,
-)
+) {
+    /** Preferred product terminology; [projectId] remains the stored name for source compatibility. */
+    val appId: String get() = projectId
+}
