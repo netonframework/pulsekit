@@ -6,15 +6,45 @@ fixed 16-byte msgtrans header. It is not an event kind and must not be inferred 
 
 ## Message types
 
-| `biz_type` | Name | Packet flow | Payload | Success response |
+| `biz_type` | Name | Packet flow | Payload | Success `data` |
 |---:|---|---|---|---|
 | `0` | Reserved | — | — | — |
-| `1` | `EVENT_BATCH_UPLOAD` | Request → Response | One identity envelope and an ordered event array | Same message ID and biz type after the batch is durably accepted into the server queue |
-| `2` | `APP_UPDATE_CHECK` | Request → Response | Platform, App ID, package name and monotonic build number | Update decision JSON; failures fail open to “no update” |
+| `1` | `EVENT_BATCH_UPLOAD` | Client Request → Server Response | One identity envelope and an ordered event array | `true` after the batch is durably accepted into the server queue |
+| `2` | `APP_UPDATE_CHECK` | Client Request → Server Response | Platform, App ID, package name and monotonic build number | Update decision object; failures fail open to “no update” |
 
 Values are an ABI. They are never renumbered or reused. A response echoes its request's message ID
 and biz type, so it does not need a separate biz type. New values must be added to
 `pulse.core.PulseBizType` and mirrored by the server's independent wire decoder.
+
+Msgtrans is bidirectional. Values `1..127` are allocated to client-to-server requests and
+`128..255` are reserved for server-to-client requests. A long-lived connection may carry requests
+in both directions at the same time; response completion is independent from request-handler
+execution, so a reverse request cannot deadlock the read loop.
+No server-to-client business type is allocated yet. Until one is defined, the SDK answers an
+unknown reverse request with `code=404`; it never silently returns an empty payload.
+
+## Response envelope
+
+Every Pulse `Request` receives exactly one msgtrans `Response`, using the same `message_id` and
+`biz_type`. Its JSON payload always has this application envelope:
+
+```json
+{"code": 0, "msg": null, "data": true}
+```
+
+`code = 0` means success. `data` contains the typed result and may be `null`. A non-zero code is an
+application failure and `msg` explains it; it is still a valid protocol response and does not close
+the connection. Current server codes are `400` for malformed input, `404` for an unsupported
+`biz_type`, `429` for bounded-queue overload, `500` for an internal request failure, and `503` when
+the durable event queue is unavailable.
+
+Transport timeout, cancellation and disconnect remain transport failures because no response was
+received. `OneWay` packets are allowed only for explicitly lossy notifications. Telemetry uploads,
+configuration commands and any operation whose caller needs a result must use Request/Response.
+
+During the current beta migration, the update-check response also repeats its update fields at the
+JSON root so already-built SDKs can continue to parse it. New code must read `data`; the root-level
+copy is compatibility-only and can be removed after those builds are retired.
 
 ## Event upload
 
@@ -41,7 +71,7 @@ outbox, then sends the oldest due batch. It deletes that row only after the matc
 response arrives. Disconnects, timeouts and process termination leave the row for retry. Event IDs
 make replay idempotent at the database.
 
-The server responds only after it has durably moved the accepted batch into Redis. Redis consumers
+The server responds with `{code:0,data:true}` only after it has durably moved the accepted batch into Redis. Redis consumers
 must claim work into a processing state and acknowledge it after the database transaction commits;
 removing an item before persistence leaves a crash window and does not satisfy this contract.
 
