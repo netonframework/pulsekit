@@ -11,17 +11,45 @@ fixed 16-byte msgtrans header. It is not an event kind and must not be inferred 
 | `0` | Reserved | — | — | — |
 | `1` | `EVENT_BATCH_UPLOAD` | Client Request → Server Response | One identity envelope and an ordered event array | `true` after the batch is durably accepted into the server queue |
 | `2` | `APP_UPDATE_CHECK` | Client Request → Server Response | Platform, App ID, package name and monotonic build number | Update decision object; failures fail open to “no update” |
+| `3` | `SESSION_REGISTER` | Client Request → Server Response | App, package, install/device identifier, SDK/version and supported capabilities | Connection ID, server time, configuration revision and heartbeat interval |
+| `4` | `CRASH_BATCH_UPLOAD` | Client Request → Server Response | One or more high-priority crash reports plus attachment metadata | `true` after durable acceptance into the crash queue |
+| `5` | `CONFIG_PULL` | Client Request → Server Response | Current configuration revision and SDK capabilities | Sampling, audit, collection and endpoint policy |
+| `6` | `HEARTBEAT` | Client Request → Server Response | Connection ID and current configuration revision | Server time and latest configuration revision |
+| `7` | `CONTROL_RPC` | Bidirectional Request → Response | Stable route string plus route-specific arguments | Route-specific result |
 
 Values are an ABI. They are never renumbered or reused. A response echoes its request's message ID
 and biz type, so it does not need a separate biz type. New values must be added to
 `pulse.core.PulseBizType` and mirrored by the server's independent wire decoder.
 
-Msgtrans is bidirectional. Values `1..127` are allocated to client-to-server requests and
-`128..255` are reserved for server-to-client requests. A long-lived connection may carry requests
-in both directions at the same time; response completion is independent from request-handler
-execution, so a reverse request cannot deadlock the read loop.
-No server-to-client business type is allocated yet. Until one is defined, the SDK answers an
-unknown reverse request with `code=404`; it never silently returns an empty payload.
+There are **seven allocated business types**, plus reserved value `0`. Types `1` and `2` are
+implemented today; types `3` through `7` are permanently assigned for the next protocol stage and
+must return `code=501` until their payload and handler are implemented.
+
+Msgtrans is bidirectional. Direction is specified by this table rather than encoded into a numeric
+range: `CONTROL_RPC` can originate from either peer, while the other allocated types originate from
+the SDK. A long-lived connection may carry requests in both directions at the same time; response
+completion is independent from request-handler execution, so a reverse request cannot deadlock the
+read loop. Until a control route is implemented, the SDK answers it with a structured non-zero
+response; it never silently returns an empty payload.
+
+`CONTROL_RPC` follows the same idea as PrivChat's generic RPC packet: new operational commands add
+a stable payload route instead of consuming a new `biz_type`. Initial route namespaces are
+`config.*`, `telemetry.*` and `audit.*`. A route must be allowlisted by the SDK; the server cannot
+use this channel to invoke arbitrary native methods or collect arbitrary data.
+
+### Allocation rules
+
+- Values are unsigned bytes and are permanent after assignment. Append only; never renumber or
+  reuse a retired value.
+- `biz_type` identifies the processing and delivery contract, not each telemetry event kind.
+  Analytics, sessions, network observations, performance and permission/API audit events remain
+  records inside `EVENT_BATCH_UPLOAD`.
+- Crash upload is separate because it needs higher delivery priority, larger limits, symbolication,
+  attachments and a different server queue. Legacy crash events inside event batches remain valid.
+- Transport keepalive is a msgtrans concern. `HEARTBEAT` is the application heartbeat used to keep
+  the registered session routable and reconcile configuration revisions.
+- Responses reuse the request's `biz_type` and `message_id`; response-only type numbers are not
+  allocated.
 
 ## Response envelope
 
@@ -35,7 +63,8 @@ Every Pulse `Request` receives exactly one msgtrans `Response`, using the same `
 `code = 0` means success. `data` contains the typed result and may be `null`. A non-zero code is an
 application failure and `msg` explains it; it is still a valid protocol response and does not close
 the connection. Current server codes are `400` for malformed input, `404` for an unsupported
-`biz_type`, `429` for bounded-queue overload, `500` for an internal request failure, and `503` when
+`biz_type`, `501` for an allocated operation not yet implemented, `429` for bounded-queue overload,
+`500` for an internal request failure, and `503` when
 the durable event queue is unavailable.
 
 Transport timeout, cancellation and disconnect remain transport failures because no response was

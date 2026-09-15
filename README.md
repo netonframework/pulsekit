@@ -78,10 +78,9 @@ cannot safely run Kotlin allocation, coroutine, or
 network code, so it writes a preallocated crash record and reports that record through the normal
 pipeline on the next launch.
 
-The complete `biz_type`, compression and delivery contract is in
-[WIRE_PROTOCOL.md](WIRE_PROTOCOL.md). The msgtrans header already defines zstd and zlib values, but
-the Kotlin transport does not transform payload bytes yet; clients therefore send `none` until the
-codec and decompression limits are implemented on both ends.
+The seven permanently allocated Pulse `biz_type` values, compression and delivery contract are in
+[WIRE_PROTOCOL.md](WIRE_PROTOCOL.md). msgtrans-kotlin implements none, zstd and zlib, validates the
+header value, and rejects decompression output beyond its configured limit.
 
 ## Build and test
 
