@@ -48,6 +48,12 @@ data class PulseConfig(
     val uploadCompression: UploadCompression = UploadCompression.Zstd,
     val compressionMinBytes: Int = 1_024,
 ) {
+    init {
+        require(batchMaxEvents > 0) { "batchMaxEvents must be positive" }
+        require(batchMaxBytes > 0) { "batchMaxBytes must be positive" }
+        require(bufferCapacity > 0) { "bufferCapacity must be positive" }
+    }
+
     /** Preferred product terminology; [projectId] remains the stored name for source compatibility. */
     val appId: String get() = projectId
 }

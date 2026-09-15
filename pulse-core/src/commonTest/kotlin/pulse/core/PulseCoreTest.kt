@@ -1,6 +1,7 @@
 package pulse.core
 
 import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.json.JsonPrimitive
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -121,6 +122,70 @@ class PulseCoreTest {
         fail = false
         client.flushOnce()
         assertEquals(listOf(UploadCompression.Zlib.wireCode, UploadCompression.Zlib.wireCode), compressionCodes)
+    }
+
+    @Test
+    fun batchByteLimitSplitsWithoutReordering() = runTest {
+        val limit = 800
+        val sent = mutableListOf<ByteArray>()
+        val sink = object : EventSink {
+            override suspend fun send(batch: ByteArray) { sent += batch }
+            override suspend fun close() {}
+        }
+        val client = PulseClient(
+            PulseConfig(
+                projectId = "t", host = "127.0.0.1",
+                batchMaxEvents = 100, batchMaxBytes = limit,
+                retryBaseDelayMs = 0, retryMaxDelayMs = 0,
+            ),
+            Identity("t", "i", "d"), this, sink,
+        )
+        repeat(5) { index ->
+            client.emit(
+                EventKind.Analytics,
+                "e$index",
+                mapOf("payload" to JsonPrimitive("x".repeat(300))),
+            )
+        }
+
+        repeat(5) { client.flushOnce() }
+
+        assertTrue(sent.size > 1)
+        assertTrue(sent.all { it.size <= limit }, sent.map { it.size }.toString())
+        assertEquals(
+            listOf("e0", "e1", "e2", "e3", "e4"),
+            sent.flatMap { JsonEventCodec.decode(it).events }.map { it.name },
+        )
+        assertEquals(0, client.oversizedEventsDropped)
+    }
+
+    @Test
+    fun oversizedEventDoesNotBlockFollowingEvents() = runTest {
+        val sent = mutableListOf<ByteArray>()
+        val sink = object : EventSink {
+            override suspend fun send(batch: ByteArray) { sent += batch }
+            override suspend fun close() {}
+        }
+        val client = PulseClient(
+            PulseConfig(
+                projectId = "t", host = "127.0.0.1",
+                batchMaxEvents = 100, batchMaxBytes = 600,
+                retryBaseDelayMs = 0, retryMaxDelayMs = 0,
+            ),
+            Identity("t", "i", "d"), this, sink,
+        )
+        client.emit(
+            EventKind.Analytics,
+            "too-large",
+            mapOf("payload" to JsonPrimitive("x".repeat(2_000))),
+        )
+        client.emit(EventKind.Analytics, "deliverable")
+
+        client.flushOnce()
+
+        assertEquals(1, client.oversizedEventsDropped)
+        assertEquals(listOf("deliverable"), JsonEventCodec.decode(sent.single()).events.map { it.name })
+        assertTrue(sent.single().size <= 600)
     }
 
     private fun ev(name: String) = Event(newId(), nowMillis(), "sess", EventKind.Analytics, name)

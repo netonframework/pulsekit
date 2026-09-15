@@ -49,7 +49,7 @@ object PulseSDK {
         class Error(val name: String, val message: String, val stack: String?) : Command()
         class Performance(val name: String, val durationMs: Long) : Command()
         class Behavior(val name: String, val module: String?) : Command()
-        class Flush(val done: CompletableDeferred<Unit>) : Command()
+        class Flush(val done: CompletableDeferred<Unit>?) : Command()
         class Stop(val done: CompletableDeferred<Unit>) : Command()
     }
 
@@ -64,6 +64,7 @@ object PulseSDK {
      */
     private var commands: Channel<Command>? = null
     private var worker: Worker? = null
+    private var lifecycleFlushObserver: AppLifecycleFlushObserver? = null
 
     /**
      * The startup update check's answer, published once the SDK has connected and asked.
@@ -112,6 +113,7 @@ object PulseSDK {
         if (config.runtime) SensitiveApiMonitor.install()
         val queue = Channel<Command>(COMMAND_QUEUE_CAPACITY, BufferOverflow.DROP_OLDEST)
         commands = queue
+        lifecycleFlushObserver = AppLifecycleFlushObserver { flush() }
         val w = Worker.start(name = "pulsekit")
         worker = w
         w.execute(TransferMode.SAFE, { config to queue }) { (cfg, channel) ->
@@ -152,7 +154,7 @@ object PulseSDK {
                                 pulse.runtime?.recordBehavior(command.name, command.module)
                             is Command.Flush -> {
                                 pulse.client.flushOnce()
-                                command.done.complete(Unit)
+                                command.done?.complete(Unit)
                             }
                             is Command.Stop -> {
                                 pulse.stop()
@@ -271,9 +273,19 @@ object PulseSDK {
         awaitCompletion(done, timeoutMillis)
     }
 
+    /**
+     * Schedule a FIFO flush without blocking the caller. iOS invokes this automatically when the
+     * app enters the background; hosts may also call it at other lifecycle boundaries.
+     */
+    fun flush() {
+        commands?.trySend(Command.Flush(done = null))
+    }
+
     /** Flush, close the connection and stop the reactor thread. */
     fun stop(timeoutMillis: Long = 3_000) {
         val w = worker ?: return
+        lifecycleFlushObserver?.close()
+        lifecycleFlushObserver = null
         val queue = commands
         if (queue != null) {
             val done = CompletableDeferred<Unit>()

@@ -2,6 +2,9 @@ plugins { kotlin("multiplatform"); kotlin("native.cocoapods") }
 repositories { mavenCentral() }
 kotlin {
     listOf(macosArm64(), macosX64(), linuxX64(), linuxArm64()).forEach { t ->
+        // SQLDelight's native driver reaches the final executable/test through pulse-core, but
+        // its system-library linker option is not propagated transitively.
+        t.binaries.configureEach { linkerOpts("-lsqlite3") }
         t.binaries.executable("pulseSmoke") { entryPoint = "pulse.pulseSmokeMain" }
     }
     // iOS: the SDK ships as an Objective-C framework, not as a klib.
@@ -14,6 +17,7 @@ kotlin {
     val iosTargets = listOf(iosArm64(), iosSimulatorArm64(), iosX64())
     iosTargets.forEach { target ->
         target.binaries.configureEach {
+            linkerOpts("-lsqlite3")
             // Kotlin 2.4 defaults Apple binaries to iOS 15. PulseKit follows the host app and
             // GearUI Kit minimum, so emit frameworks that are loadable on iOS 14 as documented
             // by Kotlin/Native's lower Apple target version override.
@@ -30,9 +34,6 @@ kotlin {
         framework {
             baseName = "PulseKit"
             isStatic = false
-            // SQLDelight's native driver uses the system SQLite library. The dependency metadata
-            // does not propagate this linker option through pulse-core into the final framework.
-            linkerOpts("-lsqlite3")
         }
     }
 

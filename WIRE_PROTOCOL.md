@@ -294,6 +294,12 @@ The mobile outbox is an SQLite table ordered by an autoincrement sequence. It is
 size, event count and age, and records attempt count and next-attempt time for exponential backoff.
 MMKV remains suitable for small configuration values, but it is not the event queue.
 
+Before an outbox row is created, the client selects the largest FIFO event prefix whose complete
+encoded envelope (identity, batch id and events) is no larger than `batchMaxBytes`. Remaining events
+form later rows without reordering. An individual event larger than that limit can never be sent;
+the client drops it, increments `oversizedEventsDropped`, and continues with later events so one
+bad observation cannot permanently block the queue.
+
 ## Permission boundary
 
 PulseKit never requests a platform permission. Runtime monitoring records which module called a

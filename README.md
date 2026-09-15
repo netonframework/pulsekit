@@ -73,7 +73,9 @@ gives delivery confirmation and backpressure; a failed send or non-zero applicat
 remains in a bounded SQLDelight/SQLite outbox and is retried in FIFO order after backoff or the next
 process launch. Batches of at least 1 KiB use zstd by default (`uploadCompression` also supports
 zlib or none); smaller batches avoid compression overhead. A row is deleted only after the matching
-msgtrans response. A POSIX crash handler
+msgtrans response. On iOS, entering the background automatically schedules a FIFO flush so events
+already accepted by the SDK move into the SQLite outbox; `flushAndWait` remains available for a
+host-controlled fatal or shutdown boundary. A POSIX crash handler
 cannot safely run Kotlin allocation, coroutine, or
 network code, so it writes a preallocated crash record and reports that record through the normal
 pipeline on the next launch.
@@ -106,10 +108,10 @@ Current boundaries:
 - `userId` is optional host-provided identity, like the account binding API of an analytics SDK;
   PulseKit does not know or depend on an app's authentication model.
 - Encoded event batches are persisted in a bounded SQLDelight outbox across process termination.
-  Events still waiting for the next batch flush remain in the bounded memory buffer; app lifecycle
-  flushing will narrow that final window further.
-- `batchMaxBytes` is part of the configuration but is not yet enforced by the batching pipeline;
-  event count and total buffered event count are bounded today.
+  iOS entering the background automatically schedules an ordered flush; a process killed before
+  that command runs can still lose the final in-memory observations.
+- `batchMaxBytes` limits the complete encoded wire envelope. Oversized individual observations are
+  dropped and counted instead of blocking all later telemetry.
 - Apple runtime observation covers the currently registered Objective-C API signatures. Android
   transport, lifecycle, crash, ANR, and runtime collectors have not been implemented yet.
 - `pulse-push` and web/TypeScript SDK interoperability have not been implemented.

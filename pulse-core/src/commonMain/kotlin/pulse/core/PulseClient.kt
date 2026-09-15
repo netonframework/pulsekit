@@ -32,6 +32,10 @@ class PulseClient(
     private var session: Session = newSession()
     private var closed = false
 
+    /** Events that could not fit in an otherwise empty batch and therefore can never be uploaded. */
+    var oversizedEventsDropped: Long = 0L
+        private set
+
     private val updateJson = kotlinx.serialization.json.Json { ignoreUnknownKeys = true; encodeDefaults = true }
 
     val currentSession: Session get() = session
@@ -73,28 +77,82 @@ class PulseClient(
     suspend fun flushOnce() {
         val now = nowMillis()
         outbox.prune(now)
-        val batch = buffer.drain(config.batchMaxEvents)
-        if (batch.isNotEmpty()) {
-            val batchId = newId()
-            val encoded = codec.encode(EventBatch(identity.toWire(config), batch, batchId))
-            val compression = if (encoded.size >= config.compressionMinBytes) {
+        val batch = drainEncodedBatch()
+        if (batch != null) {
+            val compression = if (batch.payload.size >= config.compressionMinBytes) {
                 config.uploadCompression.wireCode
             } else {
                 UploadCompression.None.wireCode
             }
-            outbox.enqueue(batchId, encoded, compression, eventCount = batch.size, nowMs = now)
+            outbox.enqueue(batch.id, batch.payload, compression, eventCount = batch.eventCount, nowMs = now)
         }
 
-        val pending = outbox.oldestDue(now) ?: return
+        val pending = outbox.oldestDue(now)
+        if (pending == null) {
+            // A failed oldest row may be sleeping until its retry deadline. Keep moving newer
+            // memory-buffer events into durable rows without violating the outbox's FIFO send.
+            if (buffer.size > 0) wake.trySend(Unit)
+            return
+        }
         try {
             sink.send(pending.payload, pending.compression)
             outbox.acknowledge(pending.sequence)
             // Drain recovered backlog without waiting another flush interval. Conflation keeps
             // this at one wake-up even when producers are also active.
-            if (outbox.hasPending()) wake.trySend(Unit)
+            if (outbox.hasPending() || buffer.size > 0) wake.trySend(Unit)
         } catch (t: Throwable) {
             outbox.markRetry(pending.sequence, now + retryDelay(pending.attemptCount))
+            // Move the rest of the memory buffer into durable storage even while the oldest row
+            // is waiting for its retry deadline. FIFO delivery remains owned by the outbox.
+            if (buffer.size > 0) wake.trySend(Unit)
         }
+    }
+
+    private data class EncodedBatch(val id: String, val payload: ByteArray, val eventCount: Int)
+
+    /**
+     * Drain the largest FIFO prefix whose complete wire envelope fits [PulseConfig.batchMaxBytes].
+     * The cap includes identity and batch-id overhead, not just event bodies. Encoding is outside
+     * the hook/emit hot path and uses a binary search, so a full 64-event batch needs at most seven
+     * encodes rather than encoding every event as it is observed.
+     */
+    private fun drainEncodedBatch(): EncodedBatch? {
+        while (buffer.size > 0) {
+            val candidates = buffer.drain(config.batchMaxEvents)
+            if (candidates.isEmpty()) return null
+            val batchId = newId()
+            var low = 1
+            var high = candidates.size
+            var acceptedCount = 0
+            var acceptedPayload: ByteArray? = null
+
+            while (low <= high) {
+                val count = (low + high) ushr 1
+                val encoded = codec.encode(
+                    EventBatch(identity.toWire(config), candidates.subList(0, count), batchId),
+                )
+                if (encoded.size <= config.batchMaxBytes) {
+                    acceptedCount = count
+                    acceptedPayload = encoded
+                    low = count + 1
+                } else {
+                    high = count - 1
+                }
+            }
+
+            if (acceptedCount == 0) {
+                // One malformed or unexpectedly large observation must not block every later event.
+                oversizedEventsDropped++
+                buffer.requeueFront(candidates.drop(1))
+                continue
+            }
+
+            if (acceptedCount < candidates.size) {
+                buffer.requeueFront(candidates.subList(acceptedCount, candidates.size))
+            }
+            return EncodedBatch(batchId, acceptedPayload!!, acceptedCount)
+        }
+        return null
     }
 
     private fun retryDelay(attemptCount: Int): Long {
