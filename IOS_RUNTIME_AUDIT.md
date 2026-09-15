@@ -97,8 +97,12 @@ IMP，发现被后装 SDK 覆盖时形成 `monitor_hook_replaced` 事件并重�
 
 ## 当前实现与缺口
 
-当前版本已经实现：随包镜像清单和后加载镜像、调用模块归因、部分零/单参数 Objective-C 敏感 API、
-相册权限入口、`NSURLSessionTask.resume` 目的地、监控安装覆盖上报、最终 App 的 UsageDescription、
+当前版本已经实现：随包镜像清单和后加载镜像、调用模块归因、按真实 ABI 区分的零至三参数
+Objective-C hook、定位/相册/相机/麦克风/通讯录/通知/ATT/日历/提醒事项/健康权限入口、剪贴板、
+IDFV/IDFA、UserDefaults、Cookie 和 WebView 桥接/脚本调用，以及 `NSURLSessionTask.resume` 目的地。
+UserDefaults 的 key/value、Cookie 内容、WebView 脚本文本和权限回调内容均不采集。监控健康事件会同时
+上报期望 hook 数、实际 hook 数、待加载 selector 和已生效 selector，避免把“未监控”误判为“未发生”。
+此外已经覆盖最终 App 的 UsageDescription、
 后台模式、URL scheme 数量、主包/Framework Privacy Manifest 的来源及具体 collected data、tracking、
 tracking domains、required-reason API 声明，以及服务端按模块和行为聚合告警。PulseKit 自身的动态
 Framework 也携带 PrivacyInfo.xcprivacy，声明实际使用的 UserDefaults 原因与采集类别。每个随包加载的
@@ -108,7 +112,9 @@ Mach-O 会单独形成 `module_artifact` 事件，携带 App 内相对路径和�
 App Groups、Keychain Groups、get-task-allow）；不调用私有 SecTask API，也不读取整份可执行文件。
 
 当前网络事件包含 method、去掉参数值的目的地、query/header 字段名、Content-Type 和 body 大小；
-尚没有响应状态、耗时和 body 字段结构。权限事件没有最终授权结果；模块清单已有 UUID，但还没有
+尚没有响应状态、耗时和 body 字段结构，也未覆盖 Network.framework、CFNetwork 和 POSIX socket。
+权限事件目前证明“哪个模块调用了申请入口”，尚没有安全替换 completion block 来记录最终授权结果；
+蓝牙、运动和 Keychain C API 也尚未覆盖。模块清单已有 UUID，但还没有
 `__TEXT` 代码指纹和签名证书摘要；
 没有本地数据流匹配；监控也尚未覆盖纯 Swift、C/C++ 和低层网络调用。这些
 边界必须在后台可见，不能把当前版本描述为完整审计。

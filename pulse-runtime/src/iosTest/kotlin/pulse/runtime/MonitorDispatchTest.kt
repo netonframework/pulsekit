@@ -186,4 +186,42 @@ class MonitorDispatchTest {
         // One call, recorded once — not once per install.
         assertEquals(1L, read.count)
     }
+
+    @Test
+    fun userDefaultsReadAndWriteAreObservedWithoutCapturingValues() {
+        SensitiveApiMonitor.install()
+        SensitiveApiMonitor.drain()
+        val defaults = NSUserDefaults.standardUserDefaults
+        val key = "pulse.monitor.probe"
+
+        defaults.setObject("private-value", forKey = key)
+        assertEquals("private-value", defaults.stringForKey(key))
+        defaults.removeObjectForKey(key)
+
+        val seen = SensitiveApiMonitor.drain().filter { it.className == "NSUserDefaults" }
+        assertTrue(seen.any { it.eventName == "user_defaults_write" }, seen.toString())
+        assertTrue(seen.any { it.eventName == "user_defaults_read" }, seen.toString())
+        assertTrue(seen.all { it.detail == null }, "a key or value escaped into evidence: $seen")
+    }
+
+    @Test
+    fun identicalSelectorsOnDifferentClassesKeepTheirOwnOriginalImplementation() {
+        SensitiveApiMonitor.install()
+        SensitiveApiMonitor.install(
+            listOf(
+                SensitiveApi("NSUserDefaults", "objectForKey:", "defaults_probe", SensitiveApi.Shape.Getter1),
+                SensitiveApi("NSCache", "objectForKey:", "cache_probe", SensitiveApi.Shape.Getter1),
+            ),
+        )
+        SensitiveApiMonitor.drain()
+
+        NSUserDefaults.standardUserDefaults.objectForKey("pulse.missing")
+        NSCache().objectForKey("pulse.missing")
+
+        val names = SensitiveApiMonitor.drain().map { it.eventName }
+        // NSUserDefaults was already installed under its production event name. NSCache shares
+        // the exact same selector but must still get its own registration and original IMP.
+        assertTrue("user_defaults_read" in names, names.toString())
+        assertTrue("cache_probe" in names, names.toString())
+    }
 }

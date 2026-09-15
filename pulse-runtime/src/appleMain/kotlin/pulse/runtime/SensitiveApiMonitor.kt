@@ -1,4 +1,4 @@
-@file:OptIn(ExperimentalForeignApi::class)
+@file:OptIn(ExperimentalForeignApi::class, kotlinx.cinterop.BetaInteropApi::class)
 
 package pulse.runtime
 
@@ -16,6 +16,7 @@ import kotlinx.cinterop.interpretObjCPointer
 import kotlinx.cinterop.objcPtr
 import platform.objc.class_getClassMethod
 import platform.objc.class_getInstanceMethod
+import platform.objc.class_getSuperclass
 import platform.objc.method_getImplementation
 import platform.objc.object_getClass
 import platform.objc.method_setImplementation
@@ -33,7 +34,7 @@ data class SensitiveApi(
     val className: String,
     val selector: String,
     val eventName: String,
-    /** Only zero-argument shapes are hooked; see [SensitiveApiMonitor]. */
+    /** Exact Objective-C ABI shape used by the replacement IMP; see [SensitiveApiMonitor]. */
     val shape: Shape = Shape.Getter,
     /**
      * Name of a zero-argument class method returning the canonical instance, when the public class
@@ -68,6 +69,14 @@ data class SensitiveApi(
         Action,
         /** `id (*)(id, SEL, id)` — one object argument, such as +[PHPhotoLibrary requestAuthorization:]. */
         Getter1,
+        /** `void (*)(id, SEL, id)` — one object-sized argument, commonly a completion block. */
+        Action1,
+        /** `void (*)(id, SEL, id, id)` — two object-sized arguments. */
+        Action2,
+        /** `void (*)(id, SEL, id, id, id)` — three object-sized arguments. */
+        Action3,
+        /** `void (*)(id, SEL, NSUInteger, id)` — options/entity plus a completion block. */
+        ActionUInt1,
     }
 }
 
@@ -77,6 +86,14 @@ private typealias GetterImp = CFunction<(COpaquePointer?, COpaquePointer?) -> CO
 private typealias ActionImp = CFunction<(COpaquePointer?, COpaquePointer?) -> Unit>
 /** `id (*)(id, SEL, id)`. */
 private typealias Getter1Imp = CFunction<(COpaquePointer?, COpaquePointer?, COpaquePointer?) -> COpaquePointer?>
+/** `void (*)(id, SEL, id)`. */
+private typealias Action1Imp = CFunction<(COpaquePointer?, COpaquePointer?, COpaquePointer?) -> Unit>
+/** `void (*)(id, SEL, id, id)`. */
+private typealias Action2Imp = CFunction<(COpaquePointer?, COpaquePointer?, COpaquePointer?, COpaquePointer?) -> Unit>
+/** `void (*)(id, SEL, id, id, id)`. */
+private typealias Action3Imp = CFunction<(COpaquePointer?, COpaquePointer?, COpaquePointer?, COpaquePointer?, COpaquePointer?) -> Unit>
+/** `void (*)(id, SEL, NSUInteger, id)`. */
+private typealias ActionUInt1Imp = CFunction<(COpaquePointer?, COpaquePointer?, ULong, COpaquePointer?) -> Unit>
 
 /**
  * Chaining helpers.
@@ -100,6 +117,41 @@ private fun callGetter1(
     arg: COpaquePointer?,
 ): COpaquePointer? = imp.reinterpret<Getter1Imp>().invoke(self, cmd, arg)
 
+private fun callAction1(imp: COpaquePointer, self: COpaquePointer?, cmd: COpaquePointer?, arg: COpaquePointer?) {
+    imp.reinterpret<Action1Imp>().invoke(self, cmd, arg)
+}
+
+private fun callAction2(
+    imp: COpaquePointer,
+    self: COpaquePointer?,
+    cmd: COpaquePointer?,
+    first: COpaquePointer?,
+    second: COpaquePointer?,
+) {
+    imp.reinterpret<Action2Imp>().invoke(self, cmd, first, second)
+}
+
+private fun callAction3(
+    imp: COpaquePointer,
+    self: COpaquePointer?,
+    cmd: COpaquePointer?,
+    first: COpaquePointer?,
+    second: COpaquePointer?,
+    third: COpaquePointer?,
+) {
+    imp.reinterpret<Action3Imp>().invoke(self, cmd, first, second, third)
+}
+
+private fun callActionUInt1(
+    imp: COpaquePointer,
+    self: COpaquePointer?,
+    cmd: COpaquePointer?,
+    value: ULong,
+    completion: COpaquePointer?,
+) {
+    imp.reinterpret<ActionUInt1Imp>().invoke(self, cmd, value, completion)
+}
+
 /**
  * Observes calls to sensitive Objective-C APIs and attributes them to the image that made them.
  *
@@ -113,10 +165,10 @@ private fun callGetter1(
  *    the Objective-C system APIs used by many Objective-C and Swift SDKs, but not pure Swift,
  *    C/C++, Network.framework or raw socket calls. Kotlin/Native's *own* bindings may bypass the
  *    swizzle, so a test must verify ordinary Objective-C dispatch rather than assume coverage.
- * 2. Only zero-argument selectors are hooked. An IMP's signature has to match the method's
- *    exactly, and getting that wrong corrupts the stack rather than failing cleanly. The
- *    zero-argument shapes already cover the identifier reads and the start-collecting calls that
- *    matter; adding an argument shape means adding it deliberately, per signature.
+ * 2. Every selector is assigned an explicit ABI shape. An IMP's signature has to match the
+ *    method exactly, and getting that wrong corrupts the stack rather than failing cleanly. New
+ *    argument/return layouts are added deliberately and tested instead of going through a
+ *    variadic forwarding function.
  *
  * Reporting is deduplicated per (api, caller): one event the first time an image touches an API,
  * with a running count. A location callback firing sixty times a minute must not become sixty
@@ -138,7 +190,19 @@ object SensitiveApiMonitor {
         SensitiveApi("CTTelephonyNetworkInfo", "subscriberCellularProvider", "carrier_info_read"),
         SensitiveApi("CLLocationManager", "startUpdatingLocation", "location_start", SensitiveApi.Shape.Action),
         SensitiveApi("CLLocationManager", "requestAlwaysAuthorization", "location_permission_request", SensitiveApi.Shape.Action),
+        SensitiveApi("CLLocationManager", "requestWhenInUseAuthorization", "location_permission_request", SensitiveApi.Shape.Action),
+        SensitiveApi("CLLocationManager", "startMonitoringSignificantLocationChanges", "location_monitoring_start", SensitiveApi.Shape.Action),
         SensitiveApi("WKWebView", "userAgent", "user_agent_read"),
+
+        // Reads from stores commonly probed by injected analytics/advertising SDKs. Values and
+        // keys are deliberately not recorded; the evidence says which store API was touched and
+        // which image made the call.
+        SensitiveApi("NSUserDefaults", "objectForKey:", "user_defaults_read", SensitiveApi.Shape.Getter1),
+        SensitiveApi("NSUserDefaults", "stringForKey:", "user_defaults_read", SensitiveApi.Shape.Getter1),
+        SensitiveApi("NSUserDefaults", "dataForKey:", "user_defaults_read", SensitiveApi.Shape.Getter1),
+        SensitiveApi("NSUserDefaults", "setObject:forKey:", "user_defaults_write", SensitiveApi.Shape.Action2),
+        SensitiveApi("NSHTTPCookieStorage", "cookies", "http_cookie_read"),
+        SensitiveApi("NSHTTPCookieStorage", "cookiesForURL:", "http_cookie_read", SensitiveApi.Shape.Getter1),
 
         // Photo library. These are class methods — asking whether the app may read the user's
         // photos does not involve an instance — which is why class-method hooking exists at all.
@@ -148,7 +212,69 @@ object SensitiveApiMonitor {
         ),
         SensitiveApi(
             "PHPhotoLibrary", "requestAuthorization:", "photo_library_permission_request",
-            shape = SensitiveApi.Shape.Getter1, isClassMethod = true,
+            shape = SensitiveApi.Shape.Action1, isClassMethod = true,
+        ),
+        SensitiveApi(
+            "PHPhotoLibrary", "requestAuthorizationForAccessLevel:handler:", "photo_library_permission_request",
+            shape = SensitiveApi.Shape.ActionUInt1, isClassMethod = true,
+        ),
+
+        // Permission entry points. Completion blocks are forwarded unchanged. The monitor never
+        // invokes these methods and therefore never creates a permission prompt itself.
+        SensitiveApi(
+            "AVCaptureDevice", "requestAccessForMediaType:completionHandler:", "camera_microphone_permission_request",
+            shape = SensitiveApi.Shape.Action2, isClassMethod = true,
+        ),
+        SensitiveApi(
+            "AVAudioSession", "requestRecordPermission:", "microphone_permission_request",
+            shape = SensitiveApi.Shape.Action1, instanceAccessor = "sharedInstance",
+        ),
+        SensitiveApi(
+            "CNContactStore", "requestAccessForEntityType:completionHandler:", "contacts_permission_request",
+            shape = SensitiveApi.Shape.ActionUInt1,
+        ),
+        SensitiveApi(
+            "ATTrackingManager", "requestTrackingAuthorizationWithCompletionHandler:", "tracking_permission_request",
+            shape = SensitiveApi.Shape.Action1, isClassMethod = true,
+        ),
+        SensitiveApi(
+            "UNUserNotificationCenter", "requestAuthorizationWithOptions:completionHandler:", "notification_permission_request",
+            // Do not call +currentNotificationCenter merely to discover its private concrete
+            // class: it raises an Objective-C exception in tools/tests without an application
+            // bundle, and Objective-C exceptions cannot be caught by Kotlin. Swizzling the public
+            // class remains passive and is the safe default.
+            shape = SensitiveApi.Shape.ActionUInt1,
+        ),
+        SensitiveApi(
+            "EKEventStore", "requestAccessToEntityType:completion:", "calendar_reminders_permission_request",
+            shape = SensitiveApi.Shape.ActionUInt1,
+        ),
+        SensitiveApi(
+            "EKEventStore", "requestFullAccessToEventsWithCompletion:", "calendar_permission_request",
+            shape = SensitiveApi.Shape.Action1,
+        ),
+        SensitiveApi(
+            "EKEventStore", "requestFullAccessToRemindersWithCompletion:", "reminders_permission_request",
+            shape = SensitiveApi.Shape.Action1,
+        ),
+        SensitiveApi(
+            "HKHealthStore", "requestAuthorizationToShareTypes:readTypes:completion:", "health_permission_request",
+            shape = SensitiveApi.Shape.Action3,
+        ),
+
+        // Web content bridges are a common exfiltration path for injected plugins. This records
+        // bridge installation/evaluation, never the script text or message contents.
+        SensitiveApi(
+            "WKUserContentController", "addScriptMessageHandler:name:", "webview_message_bridge_installed",
+            shape = SensitiveApi.Shape.Action2,
+        ),
+        SensitiveApi(
+            "WKUserContentController", "addUserScript:", "webview_script_injected",
+            shape = SensitiveApi.Shape.Action1,
+        ),
+        SensitiveApi(
+            "WKWebView", "evaluateJavaScript:completionHandler:", "webview_javascript_evaluated",
+            shape = SensitiveApi.Shape.Action2,
         ),
 
         // Network. Hooking -[NSURLSessionTask resume] rather than the many dataTaskWith… factory
@@ -182,17 +308,37 @@ object SensitiveApiMonitor {
         val detail: String?,
         var count: Long,
         val firstSeenMs: Long,
+        var lastSeenMs: Long = firstSeenMs,
+    )
+
+    /** What the SDK intended to watch versus what the current process could actually arm. */
+    data class Health(
+        val expectedCount: Int,
+        val hookedCount: Int,
+        val pending: List<SensitiveApi>,
+    )
+
+    private data class InstalledHook(
+        val api: SensitiveApi,
+        /** The concrete class whose method table was changed. */
+        val ownerClass: Long,
+        val selector: Long,
+        val original: COpaquePointer,
     )
 
     // Written from hooks that run on whatever thread the caller is on, read by drain().
     private val observations = mutableMapOf<String, Observation>()
     private val lock = kotlin.concurrent.AtomicInt(0)
 
-    /** Selector pointer -> which API it belongs to, so one hook can serve every getter. */
-    private val bySelector = mutableMapOf<Long, SensitiveApi>()
-    private val originalGetters = mutableMapOf<Long, COpaquePointer>()
-    private val originalActions = mutableMapOf<Long, COpaquePointer>()
-    private val originalGetters1 = mutableMapOf<Long, COpaquePointer>()
+    /**
+     * Selector -> installed hooks. A selector is process-global and is not a method identity:
+     * unrelated classes routinely expose the same selector (for example Photos and ATT both use
+     * `requestAuthorizationWithCompletionHandler:`). Keeping only one entry silently misattributes
+     * the second class and chains to the wrong IMP. Resolution therefore also checks the receiver's
+     * concrete class/superclass chain.
+     */
+    private val installedBySelector = mutableMapOf<Long, MutableList<InstalledHook>>()
+    private var expected = emptyList<SensitiveApi>()
 
     /**
      * APIs whose class was not loaded yet when install ran.
@@ -204,8 +350,17 @@ object SensitiveApiMonitor {
      */
     private val pending = mutableListOf<SensitiveApi>()
 
-    /** Selectors that were successfully hooked, for reporting what is actually being watched. */
-    val watching: List<SensitiveApi> get() = bySelector.values.toList()
+    /** APIs successfully hooked, for reporting what is actually being watched. */
+    val watching: List<SensitiveApi>
+        get() = withLock { installedBySelector.values.flatten().map { it.api } }
+
+    fun health(): Health = withLock {
+        Health(
+            expectedCount = expected.distinctBy { it.className to it.selector }.size,
+            hookedCount = installedBySelector.values.sumOf { it.size },
+            pending = pending.distinctBy { it.className to it.selector },
+        )
+    }
 
     /**
      * Install the hooks. Idempotent.
@@ -214,7 +369,10 @@ object SensitiveApiMonitor {
      * linked is not an error, it simply cannot make that call.
      */
     fun install(apis: List<SensitiveApi> = DEFAULT_APIS): Int {
-        pending.clear()
+        withLock {
+            expected = apis.toList()
+            pending.clear()
+        }
         return hook(apis)
     }
 
@@ -223,9 +381,10 @@ object SensitiveApiMonitor {
      * hooked, so a caller can report a watch list that grew.
      */
     fun installPending(): Int {
-        if (pending.isEmpty()) return 0
-        val retry = pending.toList()
-        pending.clear()
+        val retry = withLock {
+            if (pending.isEmpty()) return 0
+            pending.toList().also { pending.clear() }
+        }
         return hook(retry)
     }
 
@@ -236,7 +395,7 @@ object SensitiveApiMonitor {
             // genuinely never links the framework simply retries forever at no cost.
             val declared = objc_getClass(api.className) as? ObjCClass
             if (declared == null) {
-                pending.add(api)
+                addPending(api)
                 continue
             }
             // Hook the class that actually implements the method for real instances, which for a
@@ -252,44 +411,74 @@ object SensitiveApiMonitor {
             val method = if (api.isClassMethod) class_getClassMethod(cls, sel)
             else class_getInstanceMethod(cls, sel)
             if (method == null) {
-                pending.add(api)
+                addPending(api)
                 continue
             }
-            val key = sel.rawValue.toLong()
-            // Already hooked: skip. Swizzling twice would record our own replacement as "the
-            // original" and every call would then recurse into itself — the failure mode is a
-            // stack overflow on the user's device, not a missing event.
-            if (bySelector.containsKey(key)) continue
-            bySelector[key] = api
-            when (api.shape) {
-                SensitiveApi.Shape.Getter -> {
-                    val old = method_setImplementation(method, getterHook.reinterpret()) ?: continue
-                    originalGetters[key] = old
-                }
-                SensitiveApi.Shape.Action -> {
-                    val old = method_setImplementation(method, actionHook.reinterpret()) ?: continue
-                    originalActions[key] = old
-                }
-                SensitiveApi.Shape.Getter1 -> {
-                    val old = method_setImplementation(method, getter1Hook.reinterpret()) ?: continue
-                    originalGetters1[key] = old
-                }
+            val selectorKey = sel.rawValue.toLong()
+            val classKey = cls.objcPtr().toLong()
+            val installed = withLock {
+                val existing = installedBySelector[selectorKey]
+                    ?.any { it.ownerClass == classKey && it.api.isClassMethod == api.isClassMethod }
+                    ?: false
+                if (existing) return@withLock false
+
+                // Keep the registry lock across swizzling and registration. Once the replacement
+                // is visible another thread may enter it immediately; it will wait briefly here
+                // rather than observe a hook with no original IMP to chain to.
+                val old = when (api.shape) {
+                    SensitiveApi.Shape.Getter -> method_setImplementation(method, getterHook.reinterpret())
+                    SensitiveApi.Shape.Action -> method_setImplementation(method, actionHook.reinterpret())
+                    SensitiveApi.Shape.Getter1 -> method_setImplementation(method, getter1Hook.reinterpret())
+                    SensitiveApi.Shape.Action1 -> method_setImplementation(method, action1Hook.reinterpret())
+                    SensitiveApi.Shape.Action2 -> method_setImplementation(method, action2Hook.reinterpret())
+                    SensitiveApi.Shape.Action3 -> method_setImplementation(method, action3Hook.reinterpret())
+                    SensitiveApi.Shape.ActionUInt1 -> method_setImplementation(method, actionUInt1Hook.reinterpret())
+                } ?: return@withLock false
+                installedBySelector.getOrPut(selectorKey) { mutableListOf() }
+                    .add(InstalledHook(api, classKey, selectorKey, old))
+                true
             }
-            hooked++
+            if (installed) hooked++
         }
         return hooked
     }
 
-    /** Take everything observed so far and clear it, so each drain reports only new activity. */
-    fun drain(): List<Observation> {
-        while (!lock.compareAndSet(0, 1)) { /* spin; contention here is microseconds */ }
+    private fun addPending(api: SensitiveApi) = withLock {
+        if (pending.none { it.className == api.className && it.selector == api.selector }) pending.add(api)
+    }
+
+    private inline fun <T> withLock(block: () -> T): T {
+        while (!lock.compareAndSet(0, 1)) { /* hook contention is intentionally very short */ }
         try {
-            val out = observations.values.map { it.copy() }
-            observations.clear()
-            return out
+            return block()
         } finally {
             lock.value = 0
         }
+    }
+
+    private fun resolve(self: COpaquePointer?, cmd: COpaquePointer?): InstalledHook? {
+        if (self == null || cmd == null) return null
+        val selectorKey = cmd.rawValue.toLong()
+        return withLock {
+            val candidates = installedBySelector[selectorKey] ?: return@withLock null
+            val selfKey = self.rawValue.toLong()
+            candidates.firstOrNull { it.api.isClassMethod && it.ownerClass == selfKey }
+                ?: candidates.firstOrNull { !it.api.isClassMethod && receiverIsKindOf(self, it.ownerClass) }
+        }
+    }
+
+    private fun receiverIsKindOf(self: COpaquePointer, ownerClass: Long): Boolean {
+        var cls = object_getClass(interpretObjCPointer<Any>(self.rawValue)) as? ObjCClass
+        while (cls != null) {
+            if (cls.objcPtr().toLong() == ownerClass) return true
+            cls = class_getSuperclass(cls)
+        }
+        return false
+    }
+
+    /** Take everything observed so far and clear it, so each drain reports only new activity. */
+    fun drain(): List<Observation> = withLock {
+        observations.values.map { it.copy() }.also { observations.clear() }
     }
 
     /**
@@ -308,16 +497,14 @@ object SensitiveApiMonitor {
             null
         }
         val key = "${api.eventName}|${caller ?: "?"}|${detail ?: ""}"
-        while (!lock.compareAndSet(0, 1)) { }
-        try {
+        withLock {
             val existing = observations[key]
             if (existing == null) {
-                observations[key] = Observation(api.eventName, api.className, api.selector, caller, detail, 1, nowMs)
+                observations[key] = Observation(api.eventName, api.className, api.selector, caller, detail, 1, nowMs, nowMs)
             } else {
                 existing.count++
+                existing.lastSeenMs = nowMs
             }
-        } finally {
-            lock.value = 0
         }
     }
 
@@ -356,28 +543,59 @@ object SensitiveApiMonitor {
     private fun nowMs(): Long = kotlin.time.Clock.System.now().toEpochMilliseconds()
 
     private val getterHook = staticCFunction<COpaquePointer?, COpaquePointer?, COpaquePointer?> { self, cmd ->
-        val key = cmd?.rawValue?.toLong()
-        val api = if (key == null) null else bySelector[key]
-        if (api != null) record(api, self, nowMs())
+        val hook = resolve(self, cmd)
+        if (hook != null) record(hook.api, self, nowMs())
         // Chain to the original. If it is missing, install went wrong; returning null beats
         // calling an arbitrary pointer.
-        val original = if (key == null) null else originalGetters[key]
-        if (original == null) null else callGetter(original, self, cmd)
+        if (hook == null) null else callGetter(hook.original, self, cmd)
     }
 
     private val getter1Hook = staticCFunction<COpaquePointer?, COpaquePointer?, COpaquePointer?, COpaquePointer?> { self, cmd, arg ->
-        val key = if (cmd == null) null else cmd.rawValue.toLong()
-        val api = if (key == null) null else bySelector[key]
-        if (api != null) record(api, self, nowMs())
-        val original = if (key == null) null else originalGetters1[key]
-        if (original == null) null else callGetter1(original, self, cmd, arg)
+        val hook = resolve(self, cmd)
+        if (hook != null) record(hook.api, self, nowMs())
+        if (hook == null) null else callGetter1(hook.original, self, cmd, arg)
     }
 
     private val actionHook = staticCFunction<COpaquePointer?, COpaquePointer?, Unit> { self, cmd ->
-        val key = cmd?.rawValue?.toLong()
-        val api = if (key == null) null else bySelector[key]
-        if (api != null) record(api, self, nowMs())
-        val original = if (key == null) null else originalActions[key]
-        if (original != null) callAction(original, self, cmd)
+        val hook = resolve(self, cmd)
+        if (hook != null) {
+            record(hook.api, self, nowMs())
+            callAction(hook.original, self, cmd)
+        }
+    }
+
+    private val action1Hook = staticCFunction<COpaquePointer?, COpaquePointer?, COpaquePointer?, Unit> { self, cmd, arg ->
+        val hook = resolve(self, cmd)
+        if (hook != null) {
+            record(hook.api, self, nowMs())
+            callAction1(hook.original, self, cmd, arg)
+        }
+    }
+
+    private val action2Hook = staticCFunction<COpaquePointer?, COpaquePointer?, COpaquePointer?, COpaquePointer?, Unit> {
+            self, cmd, first, second ->
+        val hook = resolve(self, cmd)
+        if (hook != null) {
+            record(hook.api, self, nowMs())
+            callAction2(hook.original, self, cmd, first, second)
+        }
+    }
+
+    private val action3Hook = staticCFunction<COpaquePointer?, COpaquePointer?, COpaquePointer?, COpaquePointer?, COpaquePointer?, Unit> {
+            self, cmd, first, second, third ->
+        val hook = resolve(self, cmd)
+        if (hook != null) {
+            record(hook.api, self, nowMs())
+            callAction3(hook.original, self, cmd, first, second, third)
+        }
+    }
+
+    private val actionUInt1Hook = staticCFunction<COpaquePointer?, COpaquePointer?, ULong, COpaquePointer?, Unit> {
+            self, cmd, value, completion ->
+        val hook = resolve(self, cmd)
+        if (hook != null) {
+            record(hook.api, self, nowMs())
+            callActionUInt1(hook.original, self, cmd, value, completion)
+        }
     }
 }

@@ -31,15 +31,19 @@ fun Runtime.installSensitiveApiMonitor(apis: List<SensitiveApi> = SensitiveApiMo
  * exists once the pipeline is up.
  */
 fun Runtime.reportMonitorInstallation(): Int {
-    val hooked = SensitiveApiMonitor.watching.size
+    val health = SensitiveApiMonitor.health()
+    val watching = SensitiveApiMonitor.watching
     recordBehavior(
         name = "runtime_monitor_installed",
         attributes = mapOf(
-            "hooked_count" to hooked,
-            "watching" to SensitiveApiMonitor.watching.map { it.eventName }.distinct().joinToString(","),
+            "expected_count" to health.expectedCount,
+            "hooked_count" to health.hookedCount,
+            "pending_count" to health.pending.size,
+            "watching" to watching.map { "${it.className}.${it.selector}" }.distinct().joinToString(","),
+            "pending" to health.pending.map { "${it.className}.${it.selector}" }.joinToString(","),
         ),
     )
-    return hooked
+    return health.hookedCount
 }
 
 /**
@@ -78,6 +82,7 @@ fun Runtime.reportSensitiveApiObservations(): Int {
                 // Count, not one event per call: frequency is information, volume is noise.
                 put("call_count", o.count)
                 put("first_seen_ms", o.firstSeenMs)
+                put("last_seen_ms", o.lastSeenMs)
                 // Present only when the API has something worth naming — the destination of a
                 // network request, for instance. Query strings and fragments are already stripped
                 // by the time it gets here; see NetworkDetail.
