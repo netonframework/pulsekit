@@ -119,13 +119,24 @@ App Groups、Keychain Groups、get-task-allow）；不调用私有 SecTask API�
 系统 API 时会形成独立证据。
 尚没有响应状态、耗时和 body 字段结构，也未覆盖 Network.framework、CFNetwork 和 POSIX socket。
 权限事件目前证明“哪个模块调用了申请入口”，尚没有安全替换 completion block 来记录最终授权结果；
-蓝牙、运动和 Keychain C API 也尚未覆盖。模块清单已有 UUID，但还没有
-`__TEXT` 代码指纹和签名证书摘要；
-没有本地数据流匹配；监控也尚未覆盖纯 Swift、C/C++ 和低层网络调用。这些
+蓝牙、运动和 Keychain C API 也尚未覆盖。运行时模块清单已有 UUID；最终制品静态分析现已在服务端
+落地：版本管理可上传已签名 IPA 或压缩后的 XCArchive，服务端直接解析 thin/fat Mach-O，记录每个
+架构的 LC_UUID、实际 `__TEXT` 文件段 SHA-256、Swift metadata、Swift/C++/C 符号、未定义导入符号、
+动态依赖库，并从 LC_CODE_SIGNATURE 的 CMS 中提取签名证书主体和证书 DER SHA-256。归档本身也记录
+SHA-256；同一版本重传时以事务替换旧镜像清单，避免混合两份制品证据。ZIP 在解压前检查路径穿越、
+重复路径、符号链接、加密、条目数和展开体积，二进制始终只解析而不执行。
+
+静态符号是证据而不是源码还原：发布包裁剪符号后，纯 Swift/C/C++ 的本地定义可能不可见，但动态导入、
+load command、UUID 和 `__TEXT` 指纹仍可用；Swift metadata 只能证明镜像含 Swift 类型信息，不能凭空
+恢复被裁剪的函数名。签名状态区分证书签名、ad-hoc、未签名和损坏签名，证书摘要来自最终 Code
+Signature，不采信文件名或开发阶段工程配置。
+
+没有本地数据流匹配；运行时监控也尚未覆盖纯 Swift、C/C++ 和低层网络调用。这些
 边界必须在后台可见，不能把当前版本描述为完整审计。
 
 “内部方法实现分析”分成两个边界：运行时能列出已注册到 Objective-C runtime 的类与方法，并证明在
 敏感系统边界上实际执行的方法和调用路径；静态制品分析负责纯 Swift/C/C++、导入符号、未加载镜像以及
 代码段是否被替换。PulseKit 不会对任意 Objective-C 方法做通用 swizzle：未知 IMP 签名会破坏调用栈，
-全量拦截也会显著改变宿主性能。完整实现仍需要在最终 IPA/xcarchive 进入我方环境后增加独立的 Mach-O
-静态分析流水线，并以 LC_UUID/代码指纹把静态结果与运行时证据关联。
+全量拦截也会显著改变宿主性能。静态流水线已用同一 LC_UUID 与运行时证据建立关联所需的稳定键；后续
+后台差异页需要把相邻 build 的镜像路径、UUID、`__TEXT` 指纹、导入符号和证书集合做增删改对比，并将
+变化交给审计规则生成告警。
