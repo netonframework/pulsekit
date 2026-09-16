@@ -69,7 +69,12 @@ class SensitiveApiMonitorTest {
         assertEquals(1L, vendorRead.count)
         // The whole point: not just "it was read", but by whom.
         assertTrue(vendorRead.callerImage != null, "the call was not attributed to any image")
-        println("MONITOR observed ${vendorRead.eventName} by ${vendorRead.callerImage} x${vendorRead.count}")
+        assertTrue(vendorRead.callsiteOffset != null, "the call has no normalized callsite offset")
+        assertTrue(vendorRead.stackFingerprint?.length == 16, "the call has no stable stack fingerprint")
+        println(
+            "MONITOR observed ${vendorRead.eventName} by ${vendorRead.callerImage} " +
+                "symbol=${vendorRead.callerSymbol} stack=${vendorRead.stackFingerprint} x${vendorRead.count}",
+        )
     }
 
     @Test

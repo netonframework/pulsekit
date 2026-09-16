@@ -106,6 +106,19 @@ class Runtime(private val client: PulseClient) {
     fun recordBehavior(name: String, module: String? = null, attributes: Map<String, Any?> = emptyMap()) =
         client.emit(EventKind.Runtime, name, attributes.toEventAttributes(), EventSource(module = module))
 
+    /** Internal richer source path; kept separate so the public recordBehavior ABI stays stable. */
+    internal fun recordAttributedBehavior(
+        name: String,
+        module: String?,
+        imageUuid: String?,
+        attributes: Map<String, Any?>,
+    ) = client.emit(
+        EventKind.Runtime,
+        name,
+        attributes.toEventAttributes(),
+        EventSource(module = module, imageUuid = imageUuid),
+    )
+
     private companion object {
         /**
          * Cap on named images in one inventory event. Real bundles hold tens of frameworks; a

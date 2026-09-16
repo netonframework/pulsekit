@@ -72,13 +72,20 @@ fun Runtime.retryPendingHooks(): Int {
 
 fun Runtime.reportSensitiveApiObservations(): Int {
     val observations = SensitiveApiMonitor.drain()
+    // Resolve UUIDs off the hook path. dyld enumeration is cheap here on the periodic reporter,
+    // but would be inappropriate inside every intercepted system call.
+    val imageUuids = loadedModules().associate { it.name to it.imageUuid }
     for (o in observations) {
-        recordBehavior(
+        recordAttributedBehavior(
             name = o.eventName,
             module = o.callerImage,
+            imageUuid = o.callerImage?.let(imageUuids::get),
             attributes = buildMap {
                 put("api_class", o.className)
                 put("api_selector", o.selector)
+                o.callerSymbol?.let { put("caller_symbol", it) }
+                o.callsiteOffset?.let { put("callsite_offset", it) }
+                o.stackFingerprint?.let { put("stack_fingerprint", it) }
                 // Count, not one event per call: frequency is information, volume is noise.
                 put("call_count", o.count)
                 put("first_seen_ms", o.firstSeenMs)

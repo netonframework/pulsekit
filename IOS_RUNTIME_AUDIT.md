@@ -112,9 +112,17 @@ Mach-O 会单独形成 `module_artifact` 事件，携带 App 内相对路径和�
 App Groups、Keychain Groups、get-task-allow）；不调用私有 SecTask API，也不读取整份可执行文件。
 
 当前网络事件包含 method、去掉参数值的目的地、query/header 字段名、Content-Type 和 body 大小；
+敏感调用同时携带最近调用方符号（符号未被裁剪时）、相对 Mach-O 基址的调用点偏移和归一化调用栈
+指纹。原始进程地址不会上报；同一插件通过不同内部调用路径触发同一个系统 API 时会形成独立证据。
 尚没有响应状态、耗时和 body 字段结构，也未覆盖 Network.framework、CFNetwork 和 POSIX socket。
 权限事件目前证明“哪个模块调用了申请入口”，尚没有安全替换 completion block 来记录最终授权结果；
 蓝牙、运动和 Keychain C API 也尚未覆盖。模块清单已有 UUID，但还没有
 `__TEXT` 代码指纹和签名证书摘要；
 没有本地数据流匹配；监控也尚未覆盖纯 Swift、C/C++ 和低层网络调用。这些
 边界必须在后台可见，不能把当前版本描述为完整审计。
+
+“内部方法实现分析”分成两个边界：运行时能证明已执行的方法和调用路径；静态制品分析负责回答二进制
+里还实现了哪些未执行的方法、导入了哪些符号以及代码段是否被替换。PulseKit 当前提供前者在敏感系统
+边界上的证据。它不会对任意 Objective-C 方法做通用 swizzle：未知 IMP 签名会破坏调用栈，全量拦截也会
+显著改变宿主性能；纯 Swift/C/C++ 更不经过 Objective-C 消息分发。完整实现需要在最终 IPA/xcarchive
+进入我方环境后增加独立的 Mach-O 静态分析流水线，并以 LC_UUID/代码指纹把静态结果与运行时证据关联。

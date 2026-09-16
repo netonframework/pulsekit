@@ -304,6 +304,12 @@ object SensitiveApiMonitor {
         val className: String,
         val selector: String,
         val callerImage: String?,
+        /** Nearest retained symbol in the calling plugin, when the release binary exposes one. */
+        val callerSymbol: String?,
+        /** ASLR-independent offset from the caller image base; useful when symbols are stripped. */
+        val callsiteOffset: Long?,
+        /** Stable hash of normalized image+offset frames, never a list of raw process addresses. */
+        val stackFingerprint: String?,
         /** Short non-identifying label, such as the host a request went to. */
         val detail: String?,
         var count: Long,
@@ -487,7 +493,7 @@ object SensitiveApiMonitor {
      * call back into the API being hooked.
      */
     private fun record(api: SensitiveApi, self: COpaquePointer?, nowMs: Long) {
-        val caller = CallerAttribution.callerImage(skip = 2)
+        val caller = CallerAttribution.caller(skip = 2)
         // A detail separates observations that are genuinely different — two hosts are two
         // findings, not one with a count of two. Failures are swallowed: a detail that cannot be
         // read is a missing label, never a reason to disturb the call being observed.
@@ -496,11 +502,18 @@ object SensitiveApiMonitor {
         } catch (_: Throwable) {
             null
         }
-        val key = "${api.eventName}|${caller ?: "?"}|${detail ?: ""}"
+        // Keep distinct internal plugin entry points distinct. An ad SDK reading IDFV during
+        // startup and reading it again immediately before upload are different actions even
+        // though they end at the same system selector.
+        val key = "${api.eventName}|${caller.image ?: "?"}|${caller.symbol ?: ""}|" +
+            "${caller.stackFingerprint ?: ""}|${detail ?: ""}"
         withLock {
             val existing = observations[key]
             if (existing == null) {
-                observations[key] = Observation(api.eventName, api.className, api.selector, caller, detail, 1, nowMs, nowMs)
+                observations[key] = Observation(
+                    api.eventName, api.className, api.selector, caller.image, caller.symbol,
+                    caller.imageOffset, caller.stackFingerprint, detail, 1, nowMs, nowMs,
+                )
             } else {
                 existing.count++
                 existing.lastSeenMs = nowMs
