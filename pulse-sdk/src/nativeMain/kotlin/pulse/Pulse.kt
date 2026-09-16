@@ -77,7 +77,7 @@ class Pulse private constructor(
                 )
             }
             val client = PulseClient(config, identity, scope, outbox = outbox)
-            client.attachSink(MsgTransEventSink.connect(scope, config))
+            client.attachSink(MsgTransEventSink.connect(scope, config, identity))
             client.start()
 
             val apm = Apm(client)

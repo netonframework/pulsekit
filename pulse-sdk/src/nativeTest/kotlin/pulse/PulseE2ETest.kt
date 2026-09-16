@@ -3,10 +3,16 @@ package pulse
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
+import kotlinx.serialization.builtins.serializer
+import kotlinx.serialization.json.Json
 import msgtrans.transport.Transport
 import neton.io.net.runReactor
 import pulse.core.JsonEventCodec
+import pulse.core.PulseBizType
 import pulse.core.PulseConfig
+import pulse.core.PulseResponse
+import pulse.core.SessionRegisterRequest
+import pulse.core.SessionRegisterResult
 import kotlin.test.Test
 import kotlin.test.assertTrue
 
@@ -26,16 +32,48 @@ class PulseE2ETest {
         val port = 19610
         val firstBatchDecoded = CompletableDeferred<Int>()
         val server = Transport.bind(this, "127.0.0.1", port) { conn ->
-            conn.onRequest { payload, _ ->
-                val batch = JsonEventCodec.decode(payload)
-                if (!firstBatchDecoded.isCompleted) {
-                    // The identity must be on the wire; a batch without a device id is useless
-                    // to the server no matter how many events it carries.
-                    check(batch.identity.deviceId.isNotEmpty()) { "batch carried no device id" }
-                    check(batch.identity.projectId == "vip-mall") { "wrong project on the batch" }
-                    firstBatchDecoded.complete(batch.events.size)
+            var registered = false
+            conn.onRequest { payload, bizType ->
+                when (bizType) {
+                    PulseBizType.SESSION_REGISTER -> {
+                        val request = Json.decodeFromString(
+                            SessionRegisterRequest.serializer(),
+                            payload.decodeToString(),
+                        )
+                        check(request.appId == "vip-mall") { "wrong app in registration" }
+                        check(request.deviceId.isNotEmpty()) { "registration carried no device id" }
+                        registered = true
+                        Json.encodeToString(
+                            PulseResponse.serializer(SessionRegisterResult.serializer()),
+                            PulseResponse(
+                                data = SessionRegisterResult(
+                                    registered = true,
+                                    protocolVersion = 1,
+                                    connectionId = "test-connection",
+                                    serverTimeMs = 1,
+                                ),
+                            ),
+                        ).encodeToByteArray()
+                    }
+
+                    PulseBizType.EVENT_BATCH_UPLOAD -> {
+                        check(registered) { "batch arrived before session registration" }
+                        val batch = JsonEventCodec.decode(payload)
+                        if (!firstBatchDecoded.isCompleted) {
+                            // The identity must be on the wire; a batch without a device id is useless
+                            // to the server no matter how many events it carries.
+                            check(batch.identity.deviceId.isNotEmpty()) { "batch carried no device id" }
+                            check(batch.identity.projectId == "vip-mall") { "wrong project on the batch" }
+                            firstBatchDecoded.complete(batch.events.size)
+                        }
+                        Json.encodeToString(
+                            PulseResponse.serializer(Boolean.serializer()),
+                            PulseResponse(data = true),
+                        ).encodeToByteArray()
+                    }
+
+                    else -> ByteArray(0)
                 }
-                ByteArray(0) // ack
             }
         }
         val serverJob = launch { server.acceptLoop() }
@@ -43,6 +81,9 @@ class PulseE2ETest {
         val pulse = Pulse.start(this, PulseConfig(
             projectId = "vip-mall", host = "127.0.0.1", port = port,
             batchMaxEvents = 3, flushIntervalMs = 200,
+            // Never inherit another run's retry schedule or backlog. This test is about the live
+            // register -> update-check -> upload flow, not durable outbox recovery.
+            storageDir = "/tmp/pulse-e2e-${kotlin.random.Random.nextLong()}",
         ))
         pulse.identify("100086")
         pulse.track("purchase", mapOf("amount" to 199))

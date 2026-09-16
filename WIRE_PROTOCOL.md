@@ -42,8 +42,8 @@ Values are an ABI. They are never renumbered or reused. A response echoes its re
 and biz type, so it does not need a separate biz type. New values must be added to
 `pulse.core.PulseBizType` and mirrored by the server's independent wire decoder.
 
-There are **seven allocated business types**, plus reserved value `0`. Types `1` and `2` are
-implemented today; types `3` through `7` are permanently assigned for the next protocol stage and
+There are **seven allocated business types**, plus reserved value `0`. Types `1`, `2` and `3` are
+implemented today; types `4` through `7` are permanently assigned for the next protocol stage and
 must return `code=501` until their payload and handler are implemented.
 
 Msgtrans is bidirectional. Direction is specified by this table rather than encoded into a numeric
@@ -96,9 +96,10 @@ The intended native connection sequence is:
 6. Either peer may issue `CONTROL_RPC`. Reading responses and running inbound handlers must progress
    independently, so a handler may make a reverse request without deadlocking the connection.
 
-Until `SESSION_REGISTER` is implemented, existing SDKs may continue to use types `1` and `2`
-without registration. Once registration enforcement ships, migration must be capability/version
-gated; deployed SDKs must not be broken by an immediate global requirement.
+The 1.0 SDK performs `SESSION_REGISTER` immediately after transport connection and the server
+rejects upload and update requests with `code=401` until it succeeds. Registration is immutable for
+the lifetime of a connection; reconnecting creates a new registration. A batch whose App, package,
+device, installation or platform differs from the registered identity is rejected with `code=403`.
 
 ## Per-type payload rules
 
@@ -126,10 +127,12 @@ Pulse telemetry must not prevent the host app from launching.
 
 ### 3 — `SESSION_REGISTER`
 
-Will carry App ID, runtime package, installation/device ID, optional host-provided user ID, app
-version/build, SDK version and a capability list. Success will return a connection ID, server time,
+Carries protocol version, App ID, runtime package, installation/device ID, platform/device type,
+app version/build, SDK version and a capability list. Success returns a connection ID, server time,
 configuration revision and heartbeat interval. Package policy is evaluated here so an App ID may
 allow one or more explicitly configured packages without treating the package name as the App ID.
+This is the first request on every connection. App ID is public identification rather than a
+secret; cryptographic transport authentication is a separate layer.
 
 ### 4 — `CRASH_BATCH_UPLOAD`
 

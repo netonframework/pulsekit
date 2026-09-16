@@ -38,7 +38,7 @@ data class PulseConfig(
      * [buildNumber] must be the platform's monotonic counter (CFBundleVersion on iOS, versionCode
      * on Android), not a display version: the server compares integers precisely so the comparison
      * rule cannot drift between the two sides.
-     */
+    */
     val platform: String? = null,
     val packageName: String? = null,
     val buildNumber: Long = 0,
@@ -47,6 +47,8 @@ data class PulseConfig(
     /** Whole-batch msgtrans payload compression; small batches stay uncompressed. */
     val uploadCompression: UploadCompression = UploadCompression.Zstd,
     val compressionMinBytes: Int = 1_024,
+    /** Device family reported during connection registration, for example `iPhone` or `iPad`. */
+    val deviceType: String? = null,
 ) {
     init {
         require(batchMaxEvents > 0) { "batchMaxEvents must be positive" }

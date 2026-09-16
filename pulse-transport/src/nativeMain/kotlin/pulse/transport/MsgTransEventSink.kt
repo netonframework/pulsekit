@@ -12,6 +12,10 @@ import pulse.core.PulseBizType
 import pulse.core.PulseConfig
 import pulse.core.PulseResponse
 import pulse.core.PulseResponseException
+import pulse.core.Identity
+import pulse.core.SessionRegisterRequest
+import pulse.core.SessionRegisterResult
+import pulse.core.sessionRegisterRequest
 
 /**
  * EventSink over the msgtrans long connection. A batch is sent as one msgtrans Request with the
@@ -61,7 +65,7 @@ class MsgTransEventSink(private val conn: Connection) : EventSink {
 
     companion object {
         /** Open a Pulse ingest connection over TCP msgtrans using [config]. */
-        suspend fun connect(scope: CoroutineScope, config: PulseConfig): MsgTransEventSink {
+        suspend fun connect(scope: CoroutineScope, config: PulseConfig, identity: Identity): MsgTransEventSink {
             val connection = Transport.connect(
                 scope, config.host, config.port,
                 ConnectionConfig(requestTimeoutMillis = 15_000, maxInFlightRequests = 8),
@@ -75,7 +79,28 @@ class MsgTransEventSink(private val conn: Connection) : EventSink {
                     PulseResponse(code = 404, msg = "unsupported Pulse server biz_type=$bizType"),
                 ).encodeToByteArray()
             }
-            return MsgTransEventSink(connection)
+            val sink = MsgTransEventSink(connection)
+            try {
+                sink.register(sessionRegisterRequest(config, identity))
+            } catch (t: Throwable) {
+                connection.close()
+                throw t
+            }
+            return sink
+        }
+    }
+
+    private suspend fun register(request: SessionRegisterRequest) {
+        val payload = conn.request(
+            json.encodeToString(SessionRegisterRequest.serializer(), request).encodeToByteArray(),
+            bizType = PulseBizType.SESSION_REGISTER,
+        )
+        val response = json.decodeFromString(
+            PulseResponse.serializer(SessionRegisterResult.serializer()),
+            payload.decodeToString(),
+        )
+        if (!response.isSuccess || response.data?.registered != true) {
+            throw PulseResponseException(response.code, response.msg ?: "Pulse connection registration failed")
         }
     }
 }
