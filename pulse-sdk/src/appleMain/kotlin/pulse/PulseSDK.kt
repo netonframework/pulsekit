@@ -16,6 +16,7 @@ import pulse.runtime.SensitiveApiMonitor
 import pulse.runtime.reportMonitorInstallation
 import pulse.runtime.reportPrivacyDeclarations
 import pulse.runtime.reportSigningDeclarations
+import pulse.runtime.reportObjectiveCMethodInventory
 import pulse.runtime.retryPendingHooks
 import pulse.runtime.reportSensitiveApiObservations
 import kotlin.concurrent.atomics.AtomicReference
@@ -132,6 +133,9 @@ object PulseSDK {
                     runtime.reportMonitorInstallation()
                     runtime.reportPrivacyDeclarations()
                     runtime.reportSigningDeclarations()
+                    // Inventory does not replace or call arbitrary methods. It reads the ObjC
+                    // runtime metadata once so unexecuted plugin entry points remain auditable.
+                    runtime.reportObjectiveCMethodInventory()
                     launch {
                         while (true) {
                             kotlinx.coroutines.delay(RUNTIME_POLL_MS)

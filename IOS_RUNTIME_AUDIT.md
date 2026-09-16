@@ -97,7 +97,8 @@ IMP，发现被后装 SDK 覆盖时形成 `monitor_hook_replaced` 事件并重�
 
 ## 当前实现与缺口
 
-当前版本已经实现：随包镜像清单和后加载镜像、调用模块归因、按真实 ABI 区分的零至三参数
+当前版本已经实现：随包镜像清单和后加载镜像、Objective-C runtime 类/实例方法/类方法清单及 ABI
+type encoding、每个类的方法摘要和截断状态、调用模块归因、按真实 ABI 区分的零至三参数
 Objective-C hook、定位/相册/相机/麦克风/通讯录/通知/ATT/日历/提醒事项/健康权限入口、剪贴板、
 IDFV/IDFA、UserDefaults、Cookie 和 WebView 桥接/脚本调用，以及 `NSURLSessionTask.resume` 目的地。
 UserDefaults 的 key/value、Cookie 内容、WebView 脚本文本和权限回调内容均不采集。监控健康事件会同时
@@ -121,8 +122,8 @@ App Groups、Keychain Groups、get-task-allow）；不调用私有 SecTask API�
 没有本地数据流匹配；监控也尚未覆盖纯 Swift、C/C++ 和低层网络调用。这些
 边界必须在后台可见，不能把当前版本描述为完整审计。
 
-“内部方法实现分析”分成两个边界：运行时能证明已执行的方法和调用路径；静态制品分析负责回答二进制
-里还实现了哪些未执行的方法、导入了哪些符号以及代码段是否被替换。PulseKit 当前提供前者在敏感系统
-边界上的证据。它不会对任意 Objective-C 方法做通用 swizzle：未知 IMP 签名会破坏调用栈，全量拦截也会
-显著改变宿主性能；纯 Swift/C/C++ 更不经过 Objective-C 消息分发。完整实现需要在最终 IPA/xcarchive
-进入我方环境后增加独立的 Mach-O 静态分析流水线，并以 LC_UUID/代码指纹把静态结果与运行时证据关联。
+“内部方法实现分析”分成两个边界：运行时能列出已注册到 Objective-C runtime 的类与方法，并证明在
+敏感系统边界上实际执行的方法和调用路径；静态制品分析负责纯 Swift/C/C++、导入符号、未加载镜像以及
+代码段是否被替换。PulseKit 不会对任意 Objective-C 方法做通用 swizzle：未知 IMP 签名会破坏调用栈，
+全量拦截也会显著改变宿主性能。完整实现仍需要在最终 IPA/xcarchive 进入我方环境后增加独立的 Mach-O
+静态分析流水线，并以 LC_UUID/代码指纹把静态结果与运行时证据关联。
