@@ -48,10 +48,14 @@ internal object CallerAttribution {
         val image: String,
         val symbol: String?,
         val imageOffset: Long,
+        val isSystem: Boolean,
     )
 
     /** This SDK's own image, resolved once so its frames can be skipped. */
     private val selfImage: String? by lazy { imageOf(staticCFunction<Int, Int> { it }.rawValue.toLong()) }
+    private val selfUsesDedicatedImage: Boolean by lazy {
+        selfImage == "PulseKit" || selfImage?.startsWith("PulseKit.") == true
+    }
 
     /**
      * The image that called into a hook, skipping our own frames.
@@ -72,11 +76,11 @@ internal object CallerAttribution {
 
         // Preferred answer: the nearest frame belonging to some image other than this SDK. That is
         // the third-party framework that made the call, which is the whole question being asked.
-        val first = useful.firstOrNull { it.image != selfImage } ?: useful.firstOrNull()
+        val first = useful.firstOrNull { !isSdkFrame(it) && !it.isSystem }
         if (first == null) return CallSite(null, null, null, null, null)
 
         val fingerprintFrames = useful.asSequence()
-            .filter { it.image != selfImage }
+            .filter { !isSdkFrame(it) && !it.isSystem }
             .take(MAX_FINGERPRINT_FRAMES)
             .toList()
             .ifEmpty { listOf(first) }
@@ -90,6 +94,13 @@ internal object CallerAttribution {
     }
 
     fun callerImage(skip: Int = 1, depth: Int = 12): String? = caller(skip, depth).image
+
+    /**
+     * PulseKit's production CocoaPods binary is a dedicated dynamic framework, so its whole image
+     * can be excluded. Tests and supported static linkage put this code in the host executable;
+     * excluding that image would also erase the real host/plugin caller frames.
+     */
+    private fun isSdkFrame(frame: Frame): Boolean = selfUsesDedicatedImage && frame.image == selfImage
 
     /** Last path component of the image containing [address], or null if it resolves to nothing. */
     fun imageOf(address: Long): String? = memScoped {
@@ -113,6 +124,12 @@ internal object CallerAttribution {
             image = path.substringAfterLast('/'),
             symbol = info.dli_sname?.toKString(),
             imageOffset = (address - base).coerceAtLeast(0),
+            // Simulator runtime paths have a device-volume prefix, so prefix checks alone are
+            // insufficient. This excludes Apple system code while retaining app-bundled and
+            // externally injected images, both of which are relevant audit evidence.
+            isSystem = path.startsWith("/usr/lib/") ||
+                path.contains("/System/Library/") ||
+                path.contains("/usr/lib/"),
         )
     }
 

@@ -496,6 +496,10 @@ object SensitiveApiMonitor {
      */
     private fun record(api: SensitiveApi, self: COpaquePointer?, nowMs: Long) {
         val caller = CallerAttribution.caller(skip = 2)
+        // Calls made by PulseKit itself eventually unwind into Foundation/libdispatch. Those
+        // system frames are not plugin evidence. If no other non-system image exists in the
+        // captured path, suppress the observation rather than inventing an unattributed finding.
+        if (caller.image == null) return
         // A detail separates observations that are genuinely different — two hosts are two
         // findings, not one with a count of two. Failures are swallowed: a detail that cannot be
         // read is a missing label, never a reason to disturb the call being observed.
@@ -507,7 +511,7 @@ object SensitiveApiMonitor {
         // Keep distinct internal plugin entry points distinct. An ad SDK reading IDFV during
         // startup and reading it again immediately before upload are different actions even
         // though they end at the same system selector.
-        val key = "${api.eventName}|${caller.image ?: "?"}|${caller.symbol ?: ""}|" +
+        val key = "${api.eventName}|${caller.image}|${caller.symbol ?: ""}|" +
             "${caller.stackFingerprint ?: ""}|${detail ?: ""}"
         withLock {
             val existing = observations[key]
