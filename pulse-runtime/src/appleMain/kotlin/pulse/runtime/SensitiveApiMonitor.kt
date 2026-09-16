@@ -310,6 +310,8 @@ object SensitiveApiMonitor {
         val callsiteOffset: Long?,
         /** Stable hash of normalized image+offset frames, never a list of raw process addresses. */
         val stackFingerprint: String?,
+        /** Bounded normalized frames used to explain the plugin's internal call path. */
+        val callPath: String?,
         /** Short non-identifying label, such as the host a request went to. */
         val detail: String?,
         var count: Long,
@@ -512,7 +514,7 @@ object SensitiveApiMonitor {
             if (existing == null) {
                 observations[key] = Observation(
                     api.eventName, api.className, api.selector, caller.image, caller.symbol,
-                    caller.imageOffset, caller.stackFingerprint, detail, 1, nowMs, nowMs,
+                    caller.imageOffset, caller.stackFingerprint, caller.callPath, detail, 1, nowMs, nowMs,
                 )
             } else {
                 existing.count++

@@ -114,7 +114,9 @@ App Groups、Keychain Groups、get-task-allow）；不调用私有 SecTask API�
 
 当前网络事件包含 method、去掉参数值的目的地、query/header 字段名、Content-Type 和 body 大小；
 敏感调用同时携带最近调用方符号（符号未被裁剪时）、相对 Mach-O 基址的调用点偏移和归一化调用栈
-指纹。原始进程地址不会上报；同一插件通过不同内部调用路径触发同一个系统 API 时会形成独立证据。
+指纹，并携带最多 8 帧的可读调用路径（镜像、符号、镜像内偏移）。原始进程地址不会上报；发布包即使
+裁剪了符号，也能以镜像 UUID + 偏移交给对应 dSYM 还原。同一插件通过不同内部调用路径触发同一个
+系统 API 时会形成独立证据。
 尚没有响应状态、耗时和 body 字段结构，也未覆盖 Network.framework、CFNetwork 和 POSIX socket。
 权限事件目前证明“哪个模块调用了申请入口”，尚没有安全替换 completion block 来记录最终授权结果；
 蓝牙、运动和 Keychain C API 也尚未覆盖。模块清单已有 UUID，但还没有

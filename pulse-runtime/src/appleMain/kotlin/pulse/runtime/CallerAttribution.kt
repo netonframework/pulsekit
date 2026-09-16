@@ -36,6 +36,12 @@ internal object CallerAttribution {
         val symbol: String?,
         val imageOffset: Long?,
         val stackFingerprint: String?,
+        /**
+         * Bounded, ASLR-independent frames nearest to the monitored API. This is evidence an
+         * operator can actually read; the fingerprint above is useful for grouping but cannot
+         * explain which path inside a plugin reached the API.
+         */
+        val callPath: String?,
     )
 
     private data class Frame(
@@ -67,7 +73,7 @@ internal object CallerAttribution {
         // Preferred answer: the nearest frame belonging to some image other than this SDK. That is
         // the third-party framework that made the call, which is the whole question being asked.
         val first = useful.firstOrNull { it.image != selfImage } ?: useful.firstOrNull()
-        if (first == null) return CallSite(null, null, null, null)
+        if (first == null) return CallSite(null, null, null, null, null)
 
         val fingerprintFrames = useful.asSequence()
             .filter { it.image != selfImage }
@@ -79,6 +85,7 @@ internal object CallerAttribution {
             symbol = first.symbol?.take(MAX_SYMBOL_LENGTH),
             imageOffset = first.imageOffset,
             stackFingerprint = fingerprint(fingerprintFrames),
+            callPath = callPath(fingerprintFrames),
         )
     }
 
@@ -127,6 +134,23 @@ internal object CallerAttribution {
         return hash.toString(16).padStart(16, '0')
     }
 
+    /**
+     * Human-readable counterpart to [fingerprint]. Addresses are offsets from their image base,
+     * so ASLR addresses never leave the process. Symbols are optional because release binaries
+     * are often stripped; image + offset still maps through the matching dSYM/UUID later.
+     */
+    private fun callPath(frames: List<Frame>): String = frames.joinToString(" > ") { frame ->
+        buildString {
+            append(frame.image.take(MAX_IMAGE_LENGTH))
+            append('!')
+            frame.symbol?.take(MAX_SYMBOL_LENGTH)?.let(::append) ?: append("<stripped>")
+            append("+0x")
+            append(frame.imageOffset.toString(16))
+        }
+    }.take(MAX_CALL_PATH_LENGTH)
+
     private const val MAX_FINGERPRINT_FRAMES = 8
     private const val MAX_SYMBOL_LENGTH = 191
+    private const val MAX_IMAGE_LENGTH = 127
+    private const val MAX_CALL_PATH_LENGTH = 2_048
 }

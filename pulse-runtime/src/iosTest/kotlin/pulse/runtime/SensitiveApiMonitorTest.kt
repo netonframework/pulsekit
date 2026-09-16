@@ -71,6 +71,7 @@ class SensitiveApiMonitorTest {
         assertTrue(vendorRead.callerImage != null, "the call was not attributed to any image")
         assertTrue(vendorRead.callsiteOffset != null, "the call has no normalized callsite offset")
         assertTrue(vendorRead.stackFingerprint?.length == 16, "the call has no stable stack fingerprint")
+        assertTrue(vendorRead.callPath?.contains("!") == true, "the call has no readable internal path")
         println(
             "MONITOR observed ${vendorRead.eventName} by ${vendorRead.callerImage} " +
                 "symbol=${vendorRead.callerSymbol} stack=${vendorRead.stackFingerprint} x${vendorRead.count}",

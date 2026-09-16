@@ -86,6 +86,7 @@ fun Runtime.reportSensitiveApiObservations(): Int {
                 o.callerSymbol?.let { put("caller_symbol", it) }
                 o.callsiteOffset?.let { put("callsite_offset", it) }
                 o.stackFingerprint?.let { put("stack_fingerprint", it) }
+                o.callPath?.let { put("call_path", it) }
                 // Count, not one event per call: frequency is information, volume is noise.
                 put("call_count", o.count)
                 put("first_seen_ms", o.firstSeenMs)
