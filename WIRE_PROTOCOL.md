@@ -30,30 +30,32 @@ plaintext payload by `biz_type`.
 | `biz_type` | Name | Packet flow | Payload | Success `data` |
 |---:|---|---|---|---|
 | `0` | Reserved | — | — | — |
-| `1` | `EVENT_BATCH_UPLOAD` | Client Request → Server Response | One identity envelope and an ordered event array | `true` after the batch is durably accepted into the server queue |
-| `2` | `APP_UPDATE_CHECK` | Client Request → Server Response | Platform, App ID, package name and monotonic build number | Update decision object; failures fail open to “no update” |
-| `3` | `SESSION_REGISTER` | Client Request → Server Response | App, package, install/device identifier, SDK/version and supported capabilities | Connection ID, server time, configuration revision and heartbeat interval |
-| `4` | `CRASH_BATCH_UPLOAD` | Client Request → Server Response | One or more high-priority crash reports plus attachment metadata | `true` after durable acceptance into the crash queue |
-| `5` | `CONFIG_PULL` | Client Request → Server Response | Current configuration revision and SDK capabilities | Sampling, audit, collection and endpoint policy |
-| `6` | `HEARTBEAT` | Client Request → Server Response | Connection ID and current configuration revision | Server time and latest configuration revision |
-| `7` | `CONTROL_RPC` | Bidirectional Request → Response | Stable route string plus route-specific arguments | Route-specific result |
+| `1` | `CLIENT_CONNECT` | Client Request → Server Response | App, package, install/device identifier, SDK/version and supported capabilities | Connection ID, server time, configuration revision and heartbeat interval |
+| `2` | `CLIENT_HEARTBEAT` | Client Request → Server Response | Connection ID and current configuration revision | Server time and latest configuration revision |
+| `3` | `CLIENT_CONFIG_PULL` | Client Request → Server Response | Current configuration revision and SDK capabilities | Sampling, audit, collection and endpoint policy |
+| `4` | `CLIENT_CRASH_BATCH_UPLOAD` | Client Request → Server Response | One or more high-priority crash reports plus attachment metadata | `true` after durable acceptance into the crash queue |
+| `5` | `CLIENT_EVENT_BATCH_UPLOAD` | Client Request → Server Response | One identity envelope and an ordered event array | `true` after the batch is durably accepted into the server queue |
+| `6` | `CLIENT_APP_UPDATE_CHECK` | Client Request → Server Response | Platform, App ID, package name and monotonic build number | Update decision object; failures fail open to “no update” |
+| `7` | `BIDIRECTIONAL_CONTROL_RPC` | Bidirectional Request → Response | Stable route string plus route-specific arguments | Route-specific result |
 
-Values are an ABI. They are never renumbered or reused. A response echoes its request's message ID
-and biz type, so it does not need a separate biz type. New values must be added to
+This table is the canonical ABI beginning with Pulse protocol version `2`. The unreleased beta
+mapping used different values and is intentionally incompatible. These version-2 values are never
+renumbered or reused. A response echoes its request's message ID and biz type, so it does not need
+a separate biz type. New values must be added to
 `pulse.core.PulseBizType` and mirrored by the server's independent wire decoder.
 
-There are **seven allocated business types**, plus reserved value `0`. Types `1`, `2` and `3` are
-implemented today; types `4` through `7` are permanently assigned for the next protocol stage and
-must return `code=501` until their payload and handler are implemented.
+There are **seven allocated business types**, plus reserved value `0`. `CLIENT_CONNECT`,
+`CLIENT_EVENT_BATCH_UPLOAD` and `CLIENT_APP_UPDATE_CHECK` are implemented today. The other assigned
+operations must return `code=501` until their payload and handler are implemented.
 
 Msgtrans is bidirectional. Direction is specified by this table rather than encoded into a numeric
-range: `CONTROL_RPC` can originate from either peer, while the other allocated types originate from
+range: `BIDIRECTIONAL_CONTROL_RPC` can originate from either peer, while the other allocated types originate from
 the SDK. A long-lived connection may carry requests in both directions at the same time; response
 completion is independent from request-handler execution, so a reverse request cannot deadlock the
 read loop. Until a control route is implemented, the SDK answers it with a structured non-zero
 response; it never silently returns an empty payload.
 
-`CONTROL_RPC` follows the same idea as PrivChat's generic RPC packet: new operational commands add
+`BIDIRECTIONAL_CONTROL_RPC` follows the same idea as PrivChat's generic RPC packet: new operational commands add
 a stable payload route instead of consuming a new `biz_type`. Initial route namespaces are
 `config.*`, `telemetry.*` and `audit.*`. A route must be allowlisted by the SDK; the server cannot
 use this channel to invoke arbitrary native methods or collect arbitrary data.
@@ -72,52 +74,88 @@ use this channel to invoke arbitrary native methods or collect arbitrary data.
 5. A `Response` never enters the business request handler. It completes the matching in-flight
    request. An unmatched or duplicate response is a protocol fault and must not be interpreted as
    a new business operation.
-6. Receiving an unknown `biz_type` must produce `code=404`. Receiving an allocated but unavailable
-   type must produce `code=501`. Either result is a normal Response and must not close the session.
+6. After `CLIENT_CONNECT` succeeds, receiving an unknown `biz_type` must produce `code=404` and an
+   allocated but unavailable type must produce `code=501`. Before it succeeds, the first-frame rule
+   takes precedence and a first frame whose type is not `CLIENT_CONNECT` closes the connection.
 
 ## Direction and connection lifecycle
 
 A numeric range does not encode direction. Direction is metadata in the message registry because
-responses already reuse the request type and `CONTROL_RPC` is intentionally bidirectional.
+responses already reuse the request type and `BIDIRECTIONAL_CONTROL_RPC` is intentionally bidirectional.
 
 The intended native connection sequence is:
 
 1. Establish one msgtrans connection.
-2. Send `SESSION_REGISTER` before the server addresses the client. Registration binds this live
+2. Send `CLIENT_CONNECT` as the first frame. It binds this live
    connection to the App ID, allowed package, installation/device identity, build and SDK
    capabilities. It is SDK registration, not application-user login; `userId` remains optional and
    only comes from the host application's explicit identify call.
-3. Reconcile configuration with `CONFIG_PULL` when the registration response reports a newer
+3. Reconcile configuration with `CLIENT_CONFIG_PULL` when the connect response reports a newer
    revision.
 4. Upload durable telemetry and crash batches. Requests may be in flight concurrently up to the
    configured per-connection bound.
-5. Send `HEARTBEAT` at the server-provided interval while idle so NAT state and the server's
+5. Send `CLIENT_HEARTBEAT` at the server-provided interval while idle so NAT state and the server's
    connection registry remain current.
-6. Either peer may issue `CONTROL_RPC`. Reading responses and running inbound handlers must progress
+6. Either peer may issue `BIDIRECTIONAL_CONTROL_RPC`. Reading responses and running inbound handlers must progress
    independently, so a handler may make a reverse request without deadlocking the connection.
 
-The 1.0 SDK performs `SESSION_REGISTER` immediately after transport connection and the server
-rejects upload and update requests with `code=401` until it succeeds. Registration is immutable for
-the lifetime of a connection; reconnecting creates a new registration. A batch whose App, package,
-device, installation or platform differs from the registered identity is rejected with `code=403`.
+The SDK performs `CLIENT_CONNECT` immediately after transport connection. At the transport boundary,
+the server requires the first inbound frame to be a msgtrans `Request` with `biz_type=1`. Any other
+first frame is a protocol violation: the server closes that connection immediately, sends no
+application response and does not dispatch the payload. A rejected or malformed `CLIENT_CONNECT`
+receives its normal error response; no other operation is accepted until connect succeeds. The
+accepted identity is immutable for the lifetime of a connection. A batch whose App, package,
+device, installation or platform differs from the connected identity is rejected with `code=403`.
 
 ## Per-type payload rules
 
-### 1 — `EVENT_BATCH_UPLOAD`
+### 1 — `CLIENT_CONNECT`
+
+Carries protocol version, App ID, runtime package, installation/device ID, platform/device type,
+app version/build, SDK version and a capability list. Success returns a connection ID, server time,
+configuration revision and heartbeat interval. Package policy is evaluated here so an App ID may
+allow one or more explicitly configured packages without treating the package name as the App ID.
+
+App ID is public identification. A future authenticated form may add `keyId`, `timestamp`, `nonce`,
+`algorithm` and `signature` fields. The AppSecret is never transmitted. The signature covers a
+canonical representation of the complete connect identity plus timestamp and nonce; the server
+checks allowed clock skew, nonce replay, key status and package policy before accepting the client.
+A fixed secret in a distributed mobile binary raises the cost of casual forgery but is extractable;
+stronger deployments should combine this proof with Apple App Attest or a server-issued installation
+credential.
+
+### 2 — `CLIENT_HEARTBEAT`
+
+Will carry the connected connection ID and applied configuration revision. Success will return
+server time and the latest revision. This application heartbeat maintains routability and policy
+reconciliation; lower-level socket liveness remains a msgtrans/neton-io responsibility.
+
+### 3 — `CLIENT_CONFIG_PULL`
+
+Will carry the client's current revision and supported capabilities. Success will return a complete
+versioned policy snapshot covering sampling, enabled monitors, audit policy, batching, compression
+and endpoints. Applying a snapshot must be atomic.
+
+### 4 — `CLIENT_CRASH_BATCH_UPLOAD`
+
+Will carry durable high-priority crash records, build identity and attachment metadata. It is
+separate from general events because crash ingestion has different size limits, retention,
+symbolication, attachment handling and queue priority.
+
+### 5 — `CLIENT_EVENT_BATCH_UPLOAD`
 
 Carries one identity and an ordered, non-empty event array. `batchId` is stable for the lifetime of
 the durable outbox row and must survive retries. `event.id` is the database idempotency key. The
 identity belongs to the whole batch and must not be repeated in every event.
 
 Event `kind` values such as `Analytics`, `Network`, `Performance`, `Runtime` and `Breadcrumb` do not
-receive separate `biz_type` values. New event names and attributes evolve inside this payload.
-Sensitive values such as credentials, authorization headers and URL query/fragment data must be
-removed before the event reaches the outbox.
+receive separate `biz_type` values. Sensitive values such as credentials, authorization headers and
+URL query/fragment data must be removed before the event reaches the outbox.
 
 Success is `{"code":0,"msg":null,"data":true}` and means the server has durably accepted the batch
 into its queue. Decode success, socket receipt or an in-memory handoff is insufficient.
 
-### 2 — `APP_UPDATE_CHECK`
+### 6 — `CLIENT_APP_UPDATE_CHECK`
 
 Carries `platform`, App ID/AppKey, runtime package name and monotonic build number. Version ordering
 uses the platform build number (`CFBundleVersion` on iOS), not lexical comparison of display
@@ -125,36 +163,7 @@ versions. A successful `data` object returns `action` (`none`, `optional` or `fo
 version/build, release notes and download URL. Any failure must fail open to “no update” in the SDK;
 Pulse telemetry must not prevent the host app from launching.
 
-### 3 — `SESSION_REGISTER`
-
-Carries protocol version, App ID, runtime package, installation/device ID, platform/device type,
-app version/build, SDK version and a capability list. Success returns a connection ID, server time,
-configuration revision and heartbeat interval. Package policy is evaluated here so an App ID may
-allow one or more explicitly configured packages without treating the package name as the App ID.
-This is the first request on every connection. App ID is public identification rather than a
-secret; cryptographic transport authentication is a separate layer.
-
-### 4 — `CRASH_BATCH_UPLOAD`
-
-Will carry durable high-priority crash records, build identity and attachment metadata. It is
-separate from general events because crash ingestion has different size limits, retention,
-symbolication, attachment handling and queue priority. Previously shipped clients may continue to
-send crash events inside `EVENT_BATCH_UPLOAD`; the server must deduplicate during migration.
-
-### 5 — `CONFIG_PULL`
-
-Will carry the client's current revision and supported capabilities. Success will return a complete
-versioned policy snapshot covering sampling, enabled monitors, audit allow/deny policy, batching,
-compression and endpoints. Applying a snapshot must be atomic; an unknown field is ignored and an
-unknown required capability rejects the snapshot without partially applying it.
-
-### 6 — `HEARTBEAT`
-
-Will carry the registered connection ID and applied configuration revision. Success will return
-server time and the latest revision. This is an application heartbeat for routability and policy
-reconciliation; lower-level socket liveness remains a msgtrans/neton-io responsibility.
-
-### 7 — `CONTROL_RPC`
+### 7 — `BIDIRECTIONAL_CONTROL_RPC`
 
 Carries a stable route and route-specific arguments:
 
@@ -175,21 +184,21 @@ connection.
   reuse a retired value.
 - `biz_type` identifies the processing and delivery contract, not each telemetry event kind.
   Analytics, sessions, network observations, performance and permission/API audit events remain
-  records inside `EVENT_BATCH_UPLOAD`.
+  records inside `CLIENT_EVENT_BATCH_UPLOAD`.
 - Crash upload is separate because it needs higher delivery priority, larger limits, symbolication,
   attachments and a different server queue. Legacy crash events inside event batches remain valid.
-- Transport keepalive is a msgtrans concern. `HEARTBEAT` is the application heartbeat used to keep
-  the registered session routable and reconcile configuration revisions.
+- Transport keepalive is a msgtrans concern. `CLIENT_HEARTBEAT` is the application heartbeat used to keep
+  the connected client routable and reconcile configuration revisions.
 - Responses reuse the request's `biz_type` and `message_id`; response-only type numbers are not
   allocated.
 - A new `biz_type` is justified only by a different direction, delivery guarantee, priority, size
   limit, authorization boundary or server processing pipeline. A new JSON shape by itself is not
-  sufficient; use an event name or `CONTROL_RPC` route when those semantics remain the same.
+  sufficient; use an event name or `BIDIRECTIONAL_CONTROL_RPC` route when those semantics remain the same.
 - Reserve the next unused value only when its contract is reviewed. Update the canonical table,
   client constant, independent server constant and conformance tests in the same change.
 - Removing a feature retires its number permanently. Receivers may continue decoding it for old
   clients, but the value must never acquire a different meaning.
-- Experimental operations use `CONTROL_RPC` routes. They must not consume permanent type numbers
+- Experimental operations use `BIDIRECTIONAL_CONTROL_RPC` routes. They must not consume permanent type numbers
   until their distinct delivery or processing contract is proven.
 
 ## Response envelope
@@ -234,7 +243,7 @@ request API. It must inspect the Pulse response rather than treating any returne
 ```kotlin
 val bytes = connection.request(
     payload = encodedBatch,
-    bizType = PulseBizType.EVENT_BATCH_UPLOAD,
+    bizType = PulseBizType.CLIENT_EVENT_BATCH_UPLOAD,
     compression = Compression.Zstd,
 )
 val response = decodePulseResponse<Boolean>(bytes)
@@ -253,8 +262,8 @@ silently abandon the request:
 ```kotlin
 connection.onRequest { payload, bizType ->
     when (bizType) {
-        PulseBizType.EVENT_BATCH_UPLOAD -> handleEventBatch(payload)
-        PulseBizType.APP_UPDATE_CHECK -> handleUpdateCheck(payload)
+        PulseBizType.CLIENT_EVENT_BATCH_UPLOAD -> handleEventBatch(payload)
+        PulseBizType.CLIENT_APP_UPDATE_CHECK -> handleUpdateCheck(payload)
         else -> encodeResponse(code = 404, msg = "unsupported pulse biz_type=$bizType")
     }
 }

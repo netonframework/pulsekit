@@ -11,8 +11,8 @@ import pulse.core.JsonEventCodec
 import pulse.core.PulseBizType
 import pulse.core.PulseConfig
 import pulse.core.PulseResponse
-import pulse.core.SessionRegisterRequest
-import pulse.core.SessionRegisterResult
+import pulse.core.ClientConnectRequest
+import pulse.core.ClientConnectResult
 import kotlin.test.Test
 import kotlin.test.assertTrue
 
@@ -35,20 +35,20 @@ class PulseE2ETest {
             var registered = false
             conn.onRequest { payload, bizType ->
                 when (bizType) {
-                    PulseBizType.SESSION_REGISTER -> {
+                    PulseBizType.CLIENT_CONNECT -> {
                         val request = Json.decodeFromString(
-                            SessionRegisterRequest.serializer(),
+                            ClientConnectRequest.serializer(),
                             payload.decodeToString(),
                         )
                         check(request.appId == "vip-mall") { "wrong app in registration" }
                         check(request.deviceId.isNotEmpty()) { "registration carried no device id" }
                         registered = true
                         Json.encodeToString(
-                            PulseResponse.serializer(SessionRegisterResult.serializer()),
+                            PulseResponse.serializer(ClientConnectResult.serializer()),
                             PulseResponse(
-                                data = SessionRegisterResult(
-                                    registered = true,
-                                    protocolVersion = 1,
+                                data = ClientConnectResult(
+                                    connected = true,
+                                    protocolVersion = 2,
                                     connectionId = "test-connection",
                                     serverTimeMs = 1,
                                 ),
@@ -56,8 +56,8 @@ class PulseE2ETest {
                         ).encodeToByteArray()
                     }
 
-                    PulseBizType.EVENT_BATCH_UPLOAD -> {
-                        check(registered) { "batch arrived before session registration" }
+                    PulseBizType.CLIENT_EVENT_BATCH_UPLOAD -> {
+                        check(registered) { "batch arrived before CLIENT_CONNECT" }
                         val batch = JsonEventCodec.decode(payload)
                         if (!firstBatchDecoded.isCompleted) {
                             // The identity must be on the wire; a batch without a device id is useless

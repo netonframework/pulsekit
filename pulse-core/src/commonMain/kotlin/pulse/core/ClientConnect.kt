@@ -11,7 +11,7 @@ import kotlinx.serialization.Serializable
  * separate deployment concern.
  */
 @Serializable
-data class SessionRegisterRequest(
+data class ClientConnectRequest(
     val protocolVersion: Int = CURRENT_PROTOCOL_VERSION,
     val appId: String,
     val deviceId: String,
@@ -25,14 +25,14 @@ data class SessionRegisterRequest(
     val capabilities: List<String> = emptyList(),
 ) {
     companion object {
-        const val CURRENT_PROTOCOL_VERSION: Int = 1
+        const val CURRENT_PROTOCOL_VERSION: Int = 2
         const val SDK_VERSION: String = "1.0.0"
     }
 }
 
 @Serializable
-data class SessionRegisterResult(
-    val registered: Boolean,
+data class ClientConnectResult(
+    val connected: Boolean,
     val protocolVersion: Int,
     val connectionId: String,
     val serverTimeMs: Long,
@@ -40,9 +40,9 @@ data class SessionRegisterResult(
     val heartbeatIntervalMs: Long = 60_000,
 )
 
-fun sessionRegisterRequest(config: PulseConfig, identity: Identity): SessionRegisterRequest {
+fun clientConnectRequest(config: PulseConfig, identity: Identity): ClientConnectRequest {
     val platform = config.platform?.trim()?.takeIf(String::isNotEmpty) ?: "unknown"
-    return SessionRegisterRequest(
+    return ClientConnectRequest(
         appId = config.projectId,
         deviceId = identity.deviceId,
         installationId = identity.installationId,

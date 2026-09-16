@@ -4,9 +4,9 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
-class SessionRegistrationTest {
+class ClientConnectTest {
     @Test
-    fun registrationReusesDurableBatchIdentity() {
+    fun clientConnectReusesDurableBatchIdentity() {
         val config = PulseConfig(
             projectId = "app-1",
             host = "127.0.0.1",
@@ -17,7 +17,7 @@ class SessionRegistrationTest {
             buildNumber = 42,
             runtime = true,
         )
-        val request = sessionRegisterRequest(config, Identity("app-1", "install-1", "device-1"))
+        val request = clientConnectRequest(config, Identity("app-1", "install-1", "device-1"))
 
         assertEquals("app-1", request.appId)
         assertEquals("device-1", request.deviceId)

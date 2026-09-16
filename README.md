@@ -67,7 +67,7 @@ instead of the umbrella `Pulse` entry.
 
 ## Transport and delivery
 
-A batch is sent as one msgtrans **request** with biz type `1` (`EVENT_BATCH_UPLOAD`); only a
+A batch is sent as one msgtrans **request** with biz type `5` (`CLIENT_EVENT_BATCH_UPLOAD`); only a
 `{"code":0,"msg":null,"data":true}` response confirms receipt into the durable pipeline. `request`
 gives delivery confirmation and backpressure; a failed send or non-zero application response
 remains in a bounded SQLDelight/SQLite outbox and is retried in FIFO order after backoff or the next

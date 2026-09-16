@@ -13,9 +13,9 @@ import pulse.core.PulseConfig
 import pulse.core.PulseResponse
 import pulse.core.PulseResponseException
 import pulse.core.Identity
-import pulse.core.SessionRegisterRequest
-import pulse.core.SessionRegisterResult
-import pulse.core.sessionRegisterRequest
+import pulse.core.ClientConnectRequest
+import pulse.core.ClientConnectResult
+import pulse.core.clientConnectRequest
 
 /**
  * EventSink over the msgtrans long connection. A batch is sent as one msgtrans Request with the
@@ -39,7 +39,7 @@ class MsgTransEventSink(private val conn: Connection) : EventSink {
         // request() throws on timeout / connection failure; PulseClient requeues the batch on throw.
         val payload = conn.request(
             batch,
-            bizType = PulseBizType.EVENT_BATCH_UPLOAD,
+            bizType = PulseBizType.CLIENT_EVENT_BATCH_UPLOAD,
             compression = Compression.fromCode(compression),
         )
         val response = json.decodeFromString(
@@ -81,7 +81,7 @@ class MsgTransEventSink(private val conn: Connection) : EventSink {
             }
             val sink = MsgTransEventSink(connection)
             try {
-                sink.register(sessionRegisterRequest(config, identity))
+                sink.performClientConnect(clientConnectRequest(config, identity))
             } catch (t: Throwable) {
                 connection.close()
                 throw t
@@ -90,17 +90,17 @@ class MsgTransEventSink(private val conn: Connection) : EventSink {
         }
     }
 
-    private suspend fun register(request: SessionRegisterRequest) {
+    private suspend fun performClientConnect(request: ClientConnectRequest) {
         val payload = conn.request(
-            json.encodeToString(SessionRegisterRequest.serializer(), request).encodeToByteArray(),
-            bizType = PulseBizType.SESSION_REGISTER,
+            json.encodeToString(ClientConnectRequest.serializer(), request).encodeToByteArray(),
+            bizType = PulseBizType.CLIENT_CONNECT,
         )
         val response = json.decodeFromString(
-            PulseResponse.serializer(SessionRegisterResult.serializer()),
+            PulseResponse.serializer(ClientConnectResult.serializer()),
             payload.decodeToString(),
         )
-        if (!response.isSuccess || response.data?.registered != true) {
-            throw PulseResponseException(response.code, response.msg ?: "Pulse connection registration failed")
+        if (!response.isSuccess || response.data?.connected != true) {
+            throw PulseResponseException(response.code, response.msg ?: "Pulse client connection was rejected")
         }
     }
 }

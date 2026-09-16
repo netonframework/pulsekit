@@ -181,7 +181,7 @@ class PulseClient(
         )
         return try {
             val encoded = updateJson.encodeToString(UpdateCheckRequest.serializer(), request)
-            val reply = sink.request(PulseBizType.APP_UPDATE_CHECK, encoded.encodeToByteArray()) ?: return UpdateInfo()
+            val reply = sink.request(PulseBizType.CLIENT_APP_UPDATE_CHECK, encoded.encodeToByteArray()) ?: return UpdateInfo()
             if (reply.isEmpty()) return UpdateInfo()
             val response = updateJson.decodeFromString(
                 PulseResponse.serializer(UpdateCheckWireResult.serializer()),
