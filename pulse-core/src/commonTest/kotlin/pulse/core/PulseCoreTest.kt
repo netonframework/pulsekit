@@ -50,6 +50,7 @@ class PulseCoreTest {
         assertEquals("pulse_app_123", wire.projectId)
         assertEquals("ios", wire.platform)
         assertEquals("com.example.resigned", wire.packageName)
+        assertEquals(ClientConnectRequest.SDK_VERSION, wire.sdkVersion)
     }
 
     @Test

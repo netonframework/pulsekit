@@ -1,6 +1,8 @@
 package pulse.transport
 
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.builtins.serializer
 import kotlinx.serialization.json.Json
 import msgtrans.core.Compression
@@ -15,6 +17,8 @@ import pulse.core.PulseResponseException
 import pulse.core.Identity
 import pulse.core.ClientConnectRequest
 import pulse.core.ClientConnectResult
+import pulse.core.ClientHeartbeatRequest
+import pulse.core.ClientHeartbeatResult
 import pulse.core.clientConnectRequest
 
 /**
@@ -28,8 +32,19 @@ import pulse.core.clientConnectRequest
  * reconnect. It never touches connection internals off the reactor — Connection is thread-safe by
  * dispatch (calls post to the owning reactor).
  */
-class MsgTransEventSink(private val conn: Connection) : EventSink {
+class MsgTransEventSink private constructor(
+    private val scope: CoroutineScope,
+    private val config: PulseConfig,
+    private val identity: Identity,
+) : EventSink {
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
+    private val reconnect = Mutex()
+    private var conn: Connection? = null
+    private var closed = false
+    private var connectResult: ClientConnectResult? = null
+
+    val heartbeatIntervalMs: Long
+        get() = connectResult?.heartbeatIntervalMs?.coerceIn(15_000, 5L * 60_000) ?: 60_000
 
     override suspend fun send(batch: ByteArray) {
         send(batch, Compression.None.code)
@@ -37,11 +52,13 @@ class MsgTransEventSink(private val conn: Connection) : EventSink {
 
     override suspend fun send(batch: ByteArray, compression: Int) {
         // request() throws on timeout / connection failure; PulseClient requeues the batch on throw.
-        val payload = conn.request(
-            batch,
-            bizType = PulseBizType.CLIENT_EVENT_BATCH_UPLOAD,
-            compression = Compression.fromCode(compression),
-        )
+        val payload = withConnection { connection ->
+            connection.request(
+                batch,
+                bizType = PulseBizType.CLIENT_EVENT_BATCH_UPLOAD,
+                compression = Compression.fromCode(compression),
+            )
+        }
         val response = json.decodeFromString(
             PulseResponse.serializer(Boolean.serializer()),
             payload.decodeToString(),
@@ -54,22 +71,68 @@ class MsgTransEventSink(private val conn: Connection) : EventSink {
      * A question with an answer, on the same connection. Failures are swallowed into null: the one
      * caller is the startup update check, and a transport hiccup there must not stop the app.
      */
-    override suspend fun request(bizType: Int, payload: ByteArray): ByteArray? =
-        try {
-            conn.request(payload, bizType = bizType)
-        } catch (t: Throwable) {
-            null
-        }
+    override suspend fun request(bizType: Int, payload: ByteArray): ByteArray? = try {
+        withConnection { it.request(payload, bizType = bizType) }
+    } catch (_: Throwable) {
+        null
+    }
 
-    override suspend fun close() = conn.close()
+    /** Refresh the server-side online TTL and detect an otherwise idle broken socket. */
+    suspend fun heartbeat() {
+        val payload = withConnection { connection ->
+            // Build this after ensureConnected(): a failed heartbeat may reconnect, in which case
+            // the replacement connection has a different server-issued connection ID.
+            val connected = checkNotNull(connectResult) { "Pulse client connection is not registered" }
+            val request = ClientHeartbeatRequest(
+                connectionId = connected.connectionId,
+                clientTimeMs = kotlin.time.Clock.System.now().toEpochMilliseconds(),
+            )
+            connection.request(
+                json.encodeToString(ClientHeartbeatRequest.serializer(), request).encodeToByteArray(),
+                bizType = PulseBizType.CLIENT_HEARTBEAT,
+            )
+        }
+        val response = json.decodeFromString(
+            PulseResponse.serializer(ClientHeartbeatResult.serializer()),
+            payload.decodeToString(),
+        )
+        if (!response.isSuccess || response.data?.accepted != true) {
+            throw PulseResponseException(response.code, response.msg ?: "Pulse heartbeat rejected")
+        }
+        val result = checkNotNull(response.data)
+        connectResult = connectResult?.copy(
+            configRevision = result.configRevision,
+            heartbeatIntervalMs = result.heartbeatIntervalMs,
+        )
+    }
+
+    override suspend fun close() {
+        closed = true
+        reconnect.withLock {
+            val current = conn
+            conn = null
+            connectResult = null
+            if (current != null) runCatching { current.close() }
+        }
+    }
 
     companion object {
         /** Open a Pulse ingest connection over TCP msgtrans using [config]. */
         suspend fun connect(scope: CoroutineScope, config: PulseConfig, identity: Identity): MsgTransEventSink {
-            val connection = Transport.connect(
-                scope, config.host, config.port,
-                ConnectionConfig(requestTimeoutMillis = 15_000, maxInFlightRequests = 8),
-            )
+            val sink = MsgTransEventSink(scope, config, identity)
+            sink.ensureConnected()
+            return sink
+        }
+    }
+
+    private suspend fun ensureConnected(): Connection = reconnect.withLock {
+        check(!closed) { "Pulse event sink is closed" }
+        conn?.let { return@withLock it }
+        val connection = Transport.connect(
+            scope, config.host, config.port,
+            ConnectionConfig(requestTimeoutMillis = 15_000, maxInFlightRequests = 8),
+        )
+        try {
             // The connection is bidirectional even before Pulse defines its first server command.
             // Unknown reverse requests still receive a valid application response instead of the
             // transport's empty default response or a connection failure.
@@ -79,19 +142,39 @@ class MsgTransEventSink(private val conn: Connection) : EventSink {
                     PulseResponse(code = 404, msg = "unsupported Pulse server biz_type=$bizType"),
                 ).encodeToByteArray()
             }
-            val sink = MsgTransEventSink(connection)
-            try {
-                sink.performClientConnect(clientConnectRequest(config, identity))
-            } catch (t: Throwable) {
-                connection.close()
-                throw t
-            }
-            return sink
+            connectResult = performClientConnect(connection, clientConnectRequest(config, identity))
+            conn = connection
+            connection
+        } catch (t: Throwable) {
+            runCatching { connection.close() }
+            throw t
         }
     }
 
-    private suspend fun performClientConnect(request: ClientConnectRequest) {
-        val payload = conn.request(
+    private suspend fun <T> withConnection(block: suspend (Connection) -> T): T {
+        var failure: Throwable? = null
+        repeat(2) {
+            val connection = ensureConnected()
+            try {
+                return block(connection)
+            } catch (t: Throwable) {
+                failure = t
+                invalidate(connection)
+            }
+        }
+        throw failure ?: IllegalStateException("Pulse connection unavailable")
+    }
+
+    private suspend fun invalidate(failed: Connection) = reconnect.withLock {
+        if (conn === failed) {
+            conn = null
+            connectResult = null
+            runCatching { failed.close() }
+        }
+    }
+
+    private suspend fun performClientConnect(connection: Connection, request: ClientConnectRequest): ClientConnectResult {
+        val payload = connection.request(
             json.encodeToString(ClientConnectRequest.serializer(), request).encodeToByteArray(),
             bizType = PulseBizType.CLIENT_CONNECT,
         )
@@ -102,5 +185,6 @@ class MsgTransEventSink(private val conn: Connection) : EventSink {
         if (!response.isSuccess || response.data?.connected != true) {
             throw PulseResponseException(response.code, response.msg ?: "Pulse client connection was rejected")
         }
+        return checkNotNull(response.data)
     }
 }

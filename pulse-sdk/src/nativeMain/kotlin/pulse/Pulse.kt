@@ -1,6 +1,8 @@
 package pulse
 
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancelAndJoin
 import pulse.analytics.Analytics
 import pulse.apm.Apm
 import pulse.apm.CrashReporter
@@ -16,6 +18,9 @@ import pulse.core.persistentDeviceId
 import pulse.core.persistentInstallationId
 import pulse.runtime.Runtime
 import pulse.transport.MsgTransEventSink
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 
 /**
  * Batteries-included SDK entry. Wires the core pipeline, the analytics/apm/runtime surfaces and the
@@ -37,10 +42,14 @@ class Pulse private constructor(
      * "there is nothing to do" in every one of those cases.
      */
     val update: UpdateInfo,
+    private val heartbeatJob: Job,
 ) {
     fun identify(userId: String) = analytics.identify(userId)
     fun track(name: String, attributes: Map<String, Any?> = emptyMap()) = analytics.track(name, attributes)
-    suspend fun stop() = client.close()
+    suspend fun stop() {
+        heartbeatJob.cancelAndJoin()
+        client.close()
+    }
 
     companion object {
 
@@ -77,8 +86,29 @@ class Pulse private constructor(
                 )
             }
             val client = PulseClient(config, identity, scope, outbox = outbox)
-            client.attachSink(MsgTransEventSink.connect(scope, config, identity))
+            var connectDelay = config.retryBaseDelayMs.coerceAtLeast(100)
+            var sink: MsgTransEventSink? = null
+            while (sink == null) {
+                try {
+                    sink = MsgTransEventSink.connect(scope, config, identity)
+                } catch (t: Throwable) {
+                    if (!scope.isActive) {
+                        outbox.close()
+                        throw t
+                    }
+                    delay(connectDelay)
+                    connectDelay = (connectDelay * 2).coerceAtMost(config.retryMaxDelayMs.coerceAtLeast(100))
+                }
+            }
+            val eventSink = checkNotNull(sink)
+            client.attachSink(eventSink)
             client.start()
+            val heartbeatJob = scope.launch {
+                while (isActive) {
+                    delay(eventSink.heartbeatIntervalMs)
+                    runCatching { eventSink.heartbeat() }
+                }
+            }
 
             val apm = Apm(client)
             val runtime = if (config.runtime) Runtime(client) else null
@@ -86,7 +116,7 @@ class Pulse private constructor(
             // Asked before the first events go out, so the host has the answer as early as it can
             // possibly act on it — a forced update should gate the UI, not arrive after it.
             val update = client.checkForUpdate()
-            val pulse = Pulse(client, Analytics(client), apm, runtime, update)
+            val pulse = Pulse(client, Analytics(client), apm, runtime, update, heartbeatJob)
 
             if (config.apm) {
                 // Report last run's crash first, then take ownership of the record file.

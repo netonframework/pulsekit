@@ -40,6 +40,8 @@ data class WireIdentity(
      */
     val appVersion: String? = null,
     val buildNumber: Long = 0,
+    /** PulseKit release that produced this batch; independent of the host App version. */
+    val sdkVersion: String? = null,
     /** Runtime package identity used by the server's per-App package policy. */
     val platform: String? = null,
     val packageName: String? = null,
@@ -57,6 +59,7 @@ fun Identity.toWire(config: PulseConfig): WireIdentity =
         userId = userId,
         appVersion = config.appVersion,
         buildNumber = config.buildNumber,
+        sdkVersion = ClientConnectRequest.SDK_VERSION,
         platform = config.platform,
         packageName = config.packageName,
     )

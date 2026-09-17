@@ -31,7 +31,7 @@ plaintext payload by `biz_type`.
 |---:|---|---|---|---|
 | `0` | Reserved | — | — | — |
 | `1` | `CLIENT_CONNECT` | Client Request → Server Response | App, package, install/device identifier, SDK/version and supported capabilities | Connection ID, server time, configuration revision and heartbeat interval |
-| `2` | `CLIENT_HEARTBEAT` | Client Request → Server Response | Connection ID and current configuration revision | Server time and latest configuration revision |
+| `2` | `CLIENT_HEARTBEAT` | Client Request → Server Response | Connection ID, client time and PulseKit version | Acceptance, server time, latest configuration revision and next heartbeat interval |
 | `3` | `CLIENT_CONFIG_PULL` | Client Request → Server Response | Current configuration revision and SDK capabilities | Sampling, audit, collection and endpoint policy |
 | `4` | `CLIENT_CRASH_BATCH_UPLOAD` | Client Request → Server Response | One or more high-priority crash reports plus attachment metadata | `true` after durable acceptance into the crash queue |
 | `5` | `CLIENT_EVENT_BATCH_UPLOAD` | Client Request → Server Response | One identity envelope and an ordered event array | `true` after the batch is durably accepted into the server queue |
@@ -45,7 +45,7 @@ a separate biz type. New values must be added to
 `pulse.core.PulseBizType` and mirrored by the server's independent wire decoder.
 
 There are **seven allocated business types**, plus reserved value `0`. `CLIENT_CONNECT`,
-`CLIENT_EVENT_BATCH_UPLOAD` and `CLIENT_APP_UPDATE_CHECK` are implemented today. The other assigned
+`CLIENT_HEARTBEAT`, `CLIENT_EVENT_BATCH_UPLOAD` and `CLIENT_APP_UPDATE_CHECK` are implemented today. The other assigned
 operations must return `code=501` until their payload and handler are implemented.
 
 Msgtrans is bidirectional. Direction is specified by this table rather than encoded into a numeric
@@ -105,7 +105,8 @@ first frame is a protocol violation: the server closes that connection immediate
 application response and does not dispatch the payload. A rejected or malformed `CLIENT_CONNECT`
 receives its normal error response; no other operation is accepted until connect succeeds. The
 accepted identity is immutable for the lifetime of a connection. A batch whose App, package,
-device, installation or platform differs from the connected identity is rejected with `code=403`.
+device, installation, platform or declared PulseKit version differs from the connected identity is
+rejected with `code=403`.
 
 ## Per-type payload rules
 
@@ -126,9 +127,13 @@ credential.
 
 ### 2 — `CLIENT_HEARTBEAT`
 
-Will carry the connected connection ID and applied configuration revision. Success will return
-server time and the latest revision. This application heartbeat maintains routability and policy
-reconciliation; lower-level socket liveness remains a msgtrans/neton-io responsibility.
+Carries the server-issued connection ID, client time and PulseKit version. Success returns
+`accepted=true`, server time, the latest configuration revision and the next heartbeat interval.
+The SDK schedules the next request from that interval (currently 60 seconds). Each accepted
+heartbeat refreshes a 150-second Redis presence TTL and updates durable PostgreSQL connection
+history. A mismatched connection ID or SDK version is rejected with `code=403`. This application
+heartbeat maintains routability and policy reconciliation; lower-level socket liveness remains a
+msgtrans/neton-io responsibility.
 
 ### 3 — `CLIENT_CONFIG_PULL`
 
