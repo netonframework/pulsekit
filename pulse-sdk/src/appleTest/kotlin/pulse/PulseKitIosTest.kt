@@ -4,6 +4,9 @@ import platform.posix.getenv
 import kotlinx.cinterop.ExperimentalForeignApi
 import kotlinx.cinterop.toKString
 import pulse.core.PulseConfig
+import pulse.core.SqlDelightEventOutbox
+import pulse.core.JsonEventCodec
+import kotlin.test.assertEquals
 import kotlin.test.Test
 import kotlin.test.assertTrue
 
@@ -25,11 +28,41 @@ class PulseKitIosTest {
     @Test
     fun startIsNonBlockingAndStopTearsDown() {
         // A host calls this from the main thread during launch; if it blocked, the app would hang.
-        PulseSDK.start(PulseConfig(projectId = "it-lifecycle", host = "127.0.0.1", port = 1))
+        PulseSDK.start(PulseConfig(
+            projectId = "it-lifecycle", host = "127.0.0.1", port = 1,
+            apm = false, runtime = false,
+        ))
         assertTrue(PulseSDK.isRunning)
         PulseSDK.track("noop")          // must not throw even with no server reachable
         PulseSDK.stop(timeoutMillis = 1_500)
         assertTrue(!PulseSDK.isRunning)
+    }
+
+    @Test
+    fun offlineFacadeDrainsCommandsAndCanRestart() {
+        repeat(3) { run ->
+            val dir = "/tmp/pulse-facade-${kotlin.random.Random.nextLong()}"
+            PulseSDK.start(PulseConfig(
+                projectId = "facade-offline", host = "127.0.0.1", port = 1,
+                analytics = false, apm = false, runtime = false,
+                batchMaxEvents = 2, storageDir = dir,
+            ))
+            try {
+                repeat(5) { PulseSDK.track("run-$run-event-$it") }
+                PulseSDK.flushAndWait(2_000)
+            } finally { PulseSDK.stop(2_000) }
+            assertTrue(!PulseSDK.isRunning)
+            val outbox = SqlDelightEventOutbox(dir)
+            val names = mutableListOf<String>()
+            try {
+                while (outbox.hasPending()) {
+                    val row = checkNotNull(outbox.oldestDue(Long.MAX_VALUE))
+                    names += JsonEventCodec.decode(row.payload).events.map { it.name }
+                    outbox.acknowledge(row.sequence)
+                }
+                assertEquals((0..4).map { "run-$run-event-$it" }, names)
+            } finally { outbox.close() }
+        }
     }
 
     @Test

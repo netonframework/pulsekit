@@ -1,5 +1,6 @@
 package pulse.transport
 
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -36,6 +37,14 @@ class MsgTransEventSink private constructor(
     private val scope: CoroutineScope,
     private val config: PulseConfig,
     private val identity: Identity,
+    /**
+     * Called with the server's collection policy on connect, on reconnect and on every heartbeat.
+     *
+     * A callback rather than a property the client polls: the policy also arrives after a
+     * reconnect the client never asked for, and a poll would apply it only at the next event —
+     * which on a quiet app can be minutes of collecting something the operator has turned off.
+     */
+    private val onCollectionPolicy: ((List<String>) -> Unit)? = null,
 ) : EventSink {
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
     private val reconnect = Mutex()
@@ -73,6 +82,8 @@ class MsgTransEventSink private constructor(
      */
     override suspend fun request(bizType: Int, payload: ByteArray): ByteArray? = try {
         withConnection { it.request(payload, bizType = bizType) }
+    } catch (t: CancellationException) {
+        throw t
     } catch (_: Throwable) {
         null
     }
@@ -103,7 +114,9 @@ class MsgTransEventSink private constructor(
         connectResult = connectResult?.copy(
             configRevision = result.configRevision,
             heartbeatIntervalMs = result.heartbeatIntervalMs,
+            collectKinds = result.collectKinds,
         )
+        onCollectionPolicy?.invoke(result.collectKinds)
     }
 
     override suspend fun close() {
@@ -118,8 +131,13 @@ class MsgTransEventSink private constructor(
 
     companion object {
         /** Open a Pulse ingest connection over TCP msgtrans using [config]. */
-        suspend fun connect(scope: CoroutineScope, config: PulseConfig, identity: Identity): MsgTransEventSink {
-            val sink = MsgTransEventSink(scope, config, identity)
+        suspend fun connect(
+            scope: CoroutineScope,
+            config: PulseConfig,
+            identity: Identity,
+            onCollectionPolicy: ((List<String>) -> Unit)? = null,
+        ): MsgTransEventSink {
+            val sink = MsgTransEventSink(scope, config, identity, onCollectionPolicy)
             sink.ensureConnected()
             return sink
         }
@@ -142,7 +160,9 @@ class MsgTransEventSink private constructor(
                     PulseResponse(code = 404, msg = "unsupported Pulse server biz_type=$bizType"),
                 ).encodeToByteArray()
             }
-            connectResult = performClientConnect(connection, clientConnectRequest(config, identity))
+            val result = performClientConnect(connection, clientConnectRequest(config, identity))
+            connectResult = result
+            onCollectionPolicy?.invoke(result.collectKinds)
             conn = connection
             connection
         } catch (t: Throwable) {
@@ -157,6 +177,8 @@ class MsgTransEventSink private constructor(
             val connection = ensureConnected()
             try {
                 return block(connection)
+            } catch (t: CancellationException) {
+                throw t
             } catch (t: Throwable) {
                 failure = t
                 invalidate(connection)

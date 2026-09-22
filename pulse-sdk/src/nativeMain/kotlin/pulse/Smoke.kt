@@ -30,8 +30,8 @@ fun pulseSmokeMain(args: Array<String>) {
             buildNumber = buildNumber, appVersion = "1.0.0-smoke",
             batchMaxEvents = 1000, flushIntervalMs = 60_000
         ))
+        val u = pulse.awaitUpdate()
         // The update check has already run inside start(); report what the server said.
-        val u = pulse.update
         println("PULSE_UPDATE action=${u.action} latest=${u.latestVersionName} build=${u.latestBuildNumber} blocking=${u.isBlocking} notes=${u.releaseNotes}")
 
         pulse.identify("100086")

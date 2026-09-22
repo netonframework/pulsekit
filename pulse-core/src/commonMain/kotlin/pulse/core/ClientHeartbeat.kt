@@ -16,4 +16,7 @@ data class ClientHeartbeatResult(
     val serverTimeMs: Long,
     val configRevision: Long = 0,
     val heartbeatIntervalMs: Long = 60_000,
+    /** Same meaning as on the connect result; repeated here so a policy change reaches a
+     * long-lived connection without waiting for it to drop. */
+    val collectKinds: List<String> = emptyList(),
 )

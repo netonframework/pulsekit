@@ -64,14 +64,22 @@ internal object CallerAttribution {
      * because the number of frames between the hook and the real caller is not constant: the
      * runtime's message dispatch may or may not appear depending on architecture and optimisation.
      */
-    fun caller(skip: Int = 1, depth: Int = 12): CallSite = memScoped {
-        val frames = allocArray<COpaquePointerVar>(depth)
-        val n = backtrace(frames, depth)
+    fun caller(skip: Int = 1, depth: Int = 12): CallSite = resolve(capture(skip + 1, depth))
 
-        val useful = ArrayList<Frame>(n)
-        for (i in skip until n) {
-            val address = frames[i]?.rawValue?.toLong() ?: continue
-            frameOf(address)?.let(useful::add)
+    /** Hook 现场只保存固定深度的地址，不进行符号解析或字符串拼接。 */
+    fun capture(skip: Int = 1, depth: Int = 12): LongArray = memScoped {
+        val boundedDepth = depth.coerceIn(1, 32)
+        val frames = allocArray<COpaquePointerVar>(boundedDepth)
+        val n = backtrace(frames, boundedDepth)
+        val start = skip.coerceIn(0, n)
+        LongArray(n - start) { i -> frames[start + i]?.rawValue?.toLong() ?: 0L }
+    }
+
+    /** 仅在 drain 的工作线程解析；原始进程地址不进入上报内容。 */
+    fun resolve(addresses: LongArray): CallSite {
+        val useful = ArrayList<Frame>(addresses.size)
+        for (address in addresses) {
+            if (address != 0L) frameOf(address)?.let(useful::add)
         }
 
         // Preferred answer: the nearest frame belonging to some image other than this SDK. That is
@@ -84,7 +92,7 @@ internal object CallerAttribution {
             .take(MAX_FINGERPRINT_FRAMES)
             .toList()
             .ifEmpty { listOf(first) }
-        CallSite(
+        return CallSite(
             image = first.image,
             symbol = first.symbol?.take(MAX_SYMBOL_LENGTH),
             imageOffset = first.imageOffset,

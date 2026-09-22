@@ -1,5 +1,10 @@
 package pulse.core
 
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.yield
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.JsonPrimitive
 import kotlin.test.Test
@@ -187,6 +192,80 @@ class PulseCoreTest {
         assertEquals(1, client.oversizedEventsDropped)
         assertEquals(listOf("deliverable"), JsonEventCodec.decode(sent.single()).events.map { it.name })
         assertTrue(sent.single().size <= 600)
+    }
+
+    @Test
+    fun offlineFlushPersistsEveryBatchWithoutAcknowledging() = runTest {
+        val outbox = InMemoryEventOutbox()
+        val client = PulseClient(
+            PulseConfig(projectId = "offline", host = "127.0.0.1", batchMaxEvents = 2),
+            Identity("offline", "i", "d"), this, outbox = outbox,
+        )
+        repeat(5) { client.emit(EventKind.Analytics, "offline-$it") }
+        client.flushOnce()
+        val names = mutableListOf<String>()
+        while (outbox.hasPending()) {
+            val batch = checkNotNull(outbox.oldestDue(Long.MAX_VALUE))
+            assertEquals(0, batch.attemptCount)
+            names += JsonEventCodec.decode(batch.payload).events.map { it.name }
+            outbox.acknowledge(batch.sequence)
+        }
+        assertEquals((0..4).map { "offline-$it" }, names)
+        client.close()
+    }
+
+    @Test
+    fun concurrentFlushesDoNotSendTheSameRowTwice() = runTest {
+        val entered = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        var sends = 0
+        val sink = object : EventSink {
+            override suspend fun send(batch: ByteArray) {
+                sends++
+                entered.complete(Unit)
+                release.await()
+            }
+            override suspend fun close() {}
+        }
+        val client = PulseClient(
+            PulseConfig(projectId = "t", host = "127.0.0.1"), Identity("t", "i", "d"), this, sink,
+        )
+        client.emit(EventKind.Analytics, "one")
+        val first = launch { client.flushOnce() }
+        entered.await()
+        val second = launch { client.flushOnce() }
+        yield()
+        assertEquals(1, sends)
+        release.complete(Unit)
+        first.join()
+        second.join()
+        assertEquals(1, sends)
+        client.close()
+    }
+
+    @Test
+    fun cancelledSendKeepsTheDurableRow() = runTest {
+        val outbox = InMemoryEventOutbox()
+        val entered = CompletableDeferred<Unit>()
+        val sink = object : EventSink {
+            override suspend fun send(batch: ByteArray) {
+                entered.complete(Unit)
+                awaitCancellation()
+            }
+            override suspend fun close() {}
+        }
+        val client = PulseClient(
+            PulseConfig(projectId = "t", host = "127.0.0.1"),
+            Identity("t", "i", "d"), this, sink, outbox = outbox,
+        )
+        client.emit(EventKind.Analytics, "keep")
+        val flush = launch { client.flushOnce() }
+        entered.await()
+        flush.cancelAndJoin()
+        assertTrue(outbox.hasPending())
+        assertEquals(0, outbox.oldestDue(Long.MAX_VALUE)?.attemptCount)
+        client.close()
+        assertTrue(outbox.hasPending(), "关闭超时不能确认或删除尚未发送的批次")
     }
 
     private fun ev(name: String) = Event(newId(), nowMillis(), "sess", EventKind.Analytics, name)

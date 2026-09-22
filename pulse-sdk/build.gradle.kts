@@ -15,6 +15,12 @@ kotlin {
     // host's Kotlin version stops mattering. Dynamic rather than static: each Kotlin/Native
     // framework carries its own runtime, and two static ones in one binary collide at link time.
     val iosTargets = listOf(iosArm64(), iosSimulatorArm64(), iosX64())
+    // See src/nativeInterop/cinterop/procmetrics.def — process start time and memory footprint.
+    (iosTargets + listOf(macosArm64(), macosX64())).forEach { target ->
+        target.compilations.getByName("main").cinterops.create("procmetrics") {
+            definitionFile.set(file("src/nativeInterop/cinterop/procmetrics.def"))
+        }
+    }
     iosTargets.forEach { target ->
         target.binaries.configureEach {
             linkerOpts("-lsqlite3")

@@ -1,5 +1,10 @@
 package pulse.core
 
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
@@ -22,11 +27,12 @@ class PulseClient(
     val config: PulseConfig,
     val identity: Identity,
     private val scope: CoroutineScope,
-    private var sink: EventSink = NoopEventSink,
+    private var sink: EventSink? = null,
     private val codec: EventCodec = JsonEventCodec,
     private val outbox: EventOutbox = InMemoryEventOutbox(),
 ) {
     private val buffer = EventBuffer(config.bufferCapacity)
+    private val flushMutex = Mutex()
     private val wake = Channel<Unit>(Channel.CONFLATED)
     private var loop: Job? = null
     private var session: Session = newSession()
@@ -48,13 +54,35 @@ class PulseClient(
     }
 
     /** Attach the real transport sink (e.g. msgtrans) after construction. */
-    fun attachSink(newSink: EventSink) { sink = newSink }
+    fun attachSink(newSink: EventSink) {
+        sink = newSink
+        wake.trySend(Unit)
+    }
+
+    /**
+     * Event kinds the server accepts from this app; empty means all of them.
+     *
+     * Enforced here rather than at the sink because the point of turning a kind off is to stop
+     * paying for it: dropped before the buffer, a disabled kind costs the device no memory, no
+     * battery spent encoding, and no bytes on a metered connection.
+     */
+    private var collectKinds: Set<EventKind> = emptySet()
+
+    /** Apply a server-supplied collection policy. Unknown names are ignored, not fatal: a newer
+     * server may name kinds this SDK has never heard of. */
+    fun applyCollectionPolicy(kinds: List<String>) {
+        collectKinds = kinds.mapNotNull { name ->
+            EventKind.entries.firstOrNull { it.name.equals(name.trim(), ignoreCase = true) }
+        }.toSet()
+    }
 
     fun newSession(): Session = Session(newId(), nowMillis()).also { session = it }
 
     /** Enqueue an event; triggers a flush when the batch threshold is reached. */
     fun emit(kind: EventKind, name: String, attributes: Map<String, JsonElement> = emptyMap(), source: EventSource = EventSource()) {
         if (closed) return
+        val allowed = collectKinds
+        if (allowed.isNotEmpty() && kind !in allowed) return
         buffer.add(Event(newId(), nowMillis(), session.id, kind, name, source, attributes))
         if (buffer.size >= config.batchMaxEvents) wake.trySend(Unit)
     }
@@ -74,37 +102,44 @@ class PulseClient(
      * Commit newly collected events to the durable outbox, then attempt its oldest due batch.
      * A msgtrans response is the only operation allowed to delete a row.
      */
-    suspend fun flushOnce() {
+    suspend fun flushOnce() = flushMutex.withLock {
         val now = nowMillis()
+        persistBufferedEvents(now)
+        // 尚未连接时仅落盘，不能用成功的空实现误删离线批次。
+        val activeSink = sink ?: return@withLock
+        val pending = outbox.oldestDue(now)
+        if (pending == null) {
+            // A failed oldest row may be sleeping until its retry deadline. Keep moving newer
+            // memory-buffer events into durable rows without violating the outbox's FIFO send.
+            if (buffer.size > 0) wake.trySend(Unit)
+            return@withLock
+        }
+        try {
+            activeSink.send(pending.payload, pending.compression)
+            outbox.acknowledge(pending.sequence)
+            // Drain recovered backlog without waiting another flush interval. Conflation keeps
+            // this at one wake-up even when producers are also active.
+            if (outbox.hasPending() || buffer.size > 0) wake.trySend(Unit)
+        } catch (t: CancellationException) {
+            throw t
+        } catch (t: Throwable) {
+            outbox.markRetry(pending.sequence, nowMillis() + retryDelay(pending.attemptCount))
+            // Move the rest of the memory buffer into durable storage even while the oldest row
+            // is waiting for its retry deadline. FIFO delivery remains owned by the outbox.
+            if (buffer.size > 0) wake.trySend(Unit)
+        }
+    }
+
+    private fun persistBufferedEvents(now: Long) {
         outbox.prune(now)
-        val batch = drainEncodedBatch()
-        if (batch != null) {
+        while (true) {
+            val batch = drainEncodedBatch() ?: break
             val compression = if (batch.payload.size >= config.compressionMinBytes) {
                 config.uploadCompression.wireCode
             } else {
                 UploadCompression.None.wireCode
             }
             outbox.enqueue(batch.id, batch.payload, compression, eventCount = batch.eventCount, nowMs = now)
-        }
-
-        val pending = outbox.oldestDue(now)
-        if (pending == null) {
-            // A failed oldest row may be sleeping until its retry deadline. Keep moving newer
-            // memory-buffer events into durable rows without violating the outbox's FIFO send.
-            if (buffer.size > 0) wake.trySend(Unit)
-            return
-        }
-        try {
-            sink.send(pending.payload, pending.compression)
-            outbox.acknowledge(pending.sequence)
-            // Drain recovered backlog without waiting another flush interval. Conflation keeps
-            // this at one wake-up even when producers are also active.
-            if (outbox.hasPending() || buffer.size > 0) wake.trySend(Unit)
-        } catch (t: Throwable) {
-            outbox.markRetry(pending.sequence, now + retryDelay(pending.attemptCount))
-            // Move the rest of the memory buffer into durable storage even while the oldest row
-            // is waiting for its retry deadline. FIFO delivery remains owned by the outbox.
-            if (buffer.size > 0) wake.trySend(Unit)
         }
     }
 
@@ -181,7 +216,7 @@ class PulseClient(
         )
         return try {
             val encoded = updateJson.encodeToString(UpdateCheckRequest.serializer(), request)
-            val reply = sink.request(PulseBizType.CLIENT_APP_UPDATE_CHECK, encoded.encodeToByteArray()) ?: return UpdateInfo()
+            val reply = sink?.request(PulseBizType.CLIENT_APP_UPDATE_CHECK, encoded.encodeToByteArray()) ?: return UpdateInfo()
             if (reply.isEmpty()) return UpdateInfo()
             val response = updateJson.decodeFromString(
                 PulseResponse.serializer(UpdateCheckWireResult.serializer()),
@@ -189,6 +224,8 @@ class PulseClient(
             )
             if (!response.isSuccess) return UpdateInfo()
             response.data?.toInfo() ?: UpdateInfo()
+        } catch (t: CancellationException) {
+            throw t
         } catch (t: Throwable) {
             UpdateInfo()
         }
@@ -197,10 +234,14 @@ class PulseClient(
     suspend fun close() {
         if (closed) return
         closed = true
-        flushOnce()
-        loop?.cancel()
-        sink.close()
-        outbox.close()
+        loop?.cancelAndJoin()
+        try {
+            // 退出先完整落盘，网络收尾必须有界；未确认的批次留待下次启动。
+            withTimeoutOrNull(1_000) { flushOnce() }
+        } finally {
+            sink?.close()
+            outbox.close()
+        }
     }
 
 }

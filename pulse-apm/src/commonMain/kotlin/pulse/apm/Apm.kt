@@ -24,6 +24,15 @@ class Apm(private val client: PulseClient) {
     fun recordPerformance(name: String, durationMs: Long, attributes: Map<String, Any?> = emptyMap()) =
         client.emit(EventKind.Performance, name, (attributes + mapOf("duration_ms" to durationMs)).toEventAttributes())
 
+    /**
+     * A measurement that is a level rather than a duration — memory in use, queue depth, battery.
+     *
+     * Same event kind as a timing sample because the console treats both as "a number this build
+     * produced"; the unit travels with the value so the reader is never guessing at scale.
+     */
+    fun recordGauge(name: String, value: Long, unit: String, attributes: Map<String, Any?> = emptyMap()) =
+        client.emit(EventKind.Performance, name, (attributes + mapOf("value" to value, "unit" to unit)).toEventAttributes())
+
     fun recordNetwork(url: String, status: Int, durationMs: Long, attributes: Map<String, Any?> = emptyMap()) =
         client.emit(EventKind.Network, "http_request",
             (attributes + mapOf("url" to url, "status" to status, "duration_ms" to durationMs)).toEventAttributes())

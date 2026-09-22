@@ -3,7 +3,7 @@
 package pulse
 
 import kotlinx.coroutines.CompletableDeferred
-import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.cancelChildren
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch
@@ -120,7 +120,19 @@ object PulseSDK {
         w.execute(TransferMode.SAFE, { config to queue }) { (cfg, channel) ->
             runReactor {
                 val pulse = Pulse.start(this, cfg)
-                updateState.store(pulse.update.toAppUpdate())
+                val stopped = CompletableDeferred<CompletableDeferred<Unit>>()
+                var autoInstrumentation: AutoInstrumentation? = null
+                launch { updateState.store(pulse.awaitUpdate().toAppUpdate()) }
+
+                // What the SDK measures on its own. Without this an app only reports the numbers
+                // its developers remembered to call recordPerformance() for, which in practice
+                // means quality monitoring covers whatever someone instrumented by hand and is
+                // silent about launches, freezes and memory.
+                if (cfg.apm) {
+                    val auto = AutoInstrumentation(pulse, this)
+                    auto.install()
+                    autoInstrumentation = auto
+                }
 
                 // Runtime observation runs on a timer rather than per event. Two things are being
                 // polled: images loaded after launch, which the baseline by definition cannot
@@ -161,8 +173,7 @@ object PulseSDK {
                                 command.done?.complete(Unit)
                             }
                             is Command.Stop -> {
-                                pulse.stop()
-                                command.done.complete(Unit)
+                                stopped.complete(command.done)
                                 return@launch
                             }
                         }
@@ -170,9 +181,14 @@ object PulseSDK {
                 }
                 // Keep the reactor alive until stop() cancels it; without this runReactor would
                 // return as soon as start() finished and take the connection with it.
+                val done = stopped.await()
                 try {
-                    awaitCancellation()
-                } catch (_: Throwable) {
+                    // 生命周期、定时器与客户端都由同一个 reactor 关闭，避免主线程竞争。
+                    autoInstrumentation?.close()
+                    coroutineContext.cancelChildren()
+                    pulse.stop()
+                } finally {
+                    done.complete(Unit)
                 }
             }
         }

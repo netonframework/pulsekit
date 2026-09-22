@@ -1,11 +1,15 @@
 package pulse
 
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancelAndJoin
 import pulse.analytics.Analytics
 import pulse.apm.Apm
 import pulse.apm.CrashReporter
+import pulse.apm.installUncaughtExceptionReporter
 import pulse.core.Identity
 import pulse.core.PulseClient
 import pulse.core.PulseConfig
@@ -36,18 +40,27 @@ class Pulse private constructor(
     val apm: Apm,
     /** Non-null only when [PulseConfig.runtime] is on, so the capability can be stripped. */
     val runtime: Runtime?,
+) {
+    private var updateValue = UpdateInfo()
+
     /**
      * The startup update check's answer. [UpdateAction.None] when no platform was configured, when
      * the build is current, or when the check could not be completed — the host can treat this as
      * "there is nothing to do" in every one of those cases.
      */
-    val update: UpdateInfo,
-    private val heartbeatJob: Job,
-) {
+    val update: UpdateInfo get() = updateValue
+    private val updateReady = CompletableDeferred<UpdateInfo>()
+    private var connectionJob: Job? = null
+
+    /** 启动只准备本地采集；需要更新检查结果的调用方显式等待，超时放行。 */
+    suspend fun awaitUpdate(timeoutMillis: Long = 5_000): UpdateInfo =
+        withTimeoutOrNull(timeoutMillis) { updateReady.await() } ?: UpdateInfo()
+
     fun identify(userId: String) = analytics.identify(userId)
     fun track(name: String, attributes: Map<String, Any?> = emptyMap()) = analytics.track(name, attributes)
     suspend fun stop() {
-        heartbeatJob.cancelAndJoin()
+        connectionJob?.cancelAndJoin()
+        updateReady.complete(UpdateInfo())
         client.close()
     }
 
@@ -86,37 +99,10 @@ class Pulse private constructor(
                 )
             }
             val client = PulseClient(config, identity, scope, outbox = outbox)
-            var connectDelay = config.retryBaseDelayMs.coerceAtLeast(100)
-            var sink: MsgTransEventSink? = null
-            while (sink == null) {
-                try {
-                    sink = MsgTransEventSink.connect(scope, config, identity)
-                } catch (t: Throwable) {
-                    if (!scope.isActive) {
-                        outbox.close()
-                        throw t
-                    }
-                    delay(connectDelay)
-                    connectDelay = (connectDelay * 2).coerceAtMost(config.retryMaxDelayMs.coerceAtLeast(100))
-                }
-            }
-            val eventSink = checkNotNull(sink)
-            client.attachSink(eventSink)
-            client.start()
-            val heartbeatJob = scope.launch {
-                while (isActive) {
-                    delay(eventSink.heartbeatIntervalMs)
-                    runCatching { eventSink.heartbeat() }
-                }
-            }
-
             val apm = Apm(client)
             val runtime = if (config.runtime) Runtime(client) else null
 
-            // Asked before the first events go out, so the host has the answer as early as it can
-            // possibly act on it — a forced update should gate the UI, not arrive after it.
-            val update = client.checkForUpdate()
-            val pulse = Pulse(client, Analytics(client), apm, runtime, update, heartbeatJob)
+            val pulse = Pulse(client, Analytics(client), apm, runtime)
 
             if (config.apm) {
                 // Report last run's crash first, then take ownership of the record file.
@@ -137,11 +123,44 @@ class Pulse private constructor(
                     )
                 }
                 CrashReporter.install(dir, client.currentSession.id)
+                // Signals say the process died; this says what threw. Both write a record for the
+                // next launch to upload, so neither depends on the network at the worst moment.
+                installUncaughtExceptionReporter(dir, client.currentSession.id)
             }
 
             if (config.analytics) { pulse.analytics.sessionStart(); pulse.analytics.appLaunch() }
             // The baseline is taken after the session exists so the inventory joins this session.
             runtime?.captureBaseline()
+            // 先启用本地落盘和崩溃处理，再异步连接；首次断网不阻塞宿主事件消费。
+            client.start()
+            pulse.connectionJob = scope.launch {
+                var connectDelay = config.retryBaseDelayMs.coerceAtLeast(100)
+                var sink: MsgTransEventSink? = null
+                while (sink == null) {
+                    try {
+                        sink = withTimeout(15_000) {
+                            MsgTransEventSink.connect(scope, config, identity) { kinds ->
+                                client.applyCollectionPolicy(kinds)
+                            }
+                        }
+                    } catch (t: Throwable) {
+                        if (!isActive) throw t
+                        delay(connectDelay)
+                        connectDelay = (connectDelay * 2)
+                            .coerceAtMost(config.retryMaxDelayMs.coerceAtLeast(100))
+                    }
+                }
+                val eventSink = checkNotNull(sink)
+                client.attachSink(eventSink)
+                // Asked before the first events go out, so the host has the answer as early as it can
+                // possibly act on it — a forced update should gate the UI, not arrive after it.
+                pulse.updateValue = withTimeoutOrNull(5_000) { client.checkForUpdate() } ?: UpdateInfo()
+                pulse.updateReady.complete(pulse.updateValue)
+                while (isActive) {
+                    delay(eventSink.heartbeatIntervalMs)
+                    runCatching { eventSink.heartbeat() }
+                }
+            }
             return pulse
         }
 

@@ -38,6 +38,12 @@ data class ClientConnectResult(
     val serverTimeMs: Long,
     val configRevision: Long = 0,
     val heartbeatIntervalMs: Long = 60_000,
+    /**
+     * Which event kinds the server wants from this app. Empty — the default, and what an older
+     * server that does not send the field decodes to — means every kind, so collection is on by
+     * default and turning something off is a deliberate act recorded in the console.
+     */
+    val collectKinds: List<String> = emptyList(),
 )
 
 fun clientConnectRequest(config: PulseConfig, identity: Identity): ClientConnectRequest {

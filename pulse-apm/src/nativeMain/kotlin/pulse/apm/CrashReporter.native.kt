@@ -174,11 +174,18 @@ actual object CrashReporter {
             if (i > 0) fields[line.substring(0, i)] = line.substring(i + 1)
         }
         fclose(f)
-        val sig = fields["sig"]?.toIntOrNull() ?: return null
+        // Two producers write here. The signal handler writes sig=; the uncaught-exception
+        // reporter writes name=/message= instead, because an exception knows what it was and
+        // "SIGABRT" is the least useful way to say NSInvalidArgumentException.
+        val sig = fields["sig"]?.toIntOrNull()
+        val name = fields["name"] ?: sig?.let(::signalName) ?: return null
+        val message = fields["message"]?.takeIf { it.isNotBlank() }
+            ?: sig?.let { "process terminated by signal $it" }
+            ?: name
         val ts = fields["ts"]?.toLongOrNull() ?: 0L
         PendingCrash(
-            name = signalName(sig),
-            message = "process terminated by signal $sig",
+            name = name,
+            message = message,
             timestampMs = ts * 1000L,
             sessionId = fields["session"].orEmpty(),
             imageSlide = fields["slide"]?.toLongOrNull() ?: 0L,

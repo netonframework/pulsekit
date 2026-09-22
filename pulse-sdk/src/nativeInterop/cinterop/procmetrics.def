@@ -1,0 +1,30 @@
+# Two kernel facts the SDK needs and the platform klibs do not expose: when the process actually
+# started (sysctl KERN_PROC) and how much memory the OS charges it for (task_info TASK_VM_INFO).
+#
+# Written as C here rather than imported as headers: both are small struct-and-mib incantations
+# whose whole value is getting the sizes and units exactly right, and doing that once in C is far
+# less error-prone than reproducing the struct layout through cinterop bindings.
+package = pulse.procmetrics
+---
+#include <sys/types.h>
+#include <sys/sysctl.h>
+#include <mach/mach.h>
+#include <unistd.h>
+
+/** Process start, epoch milliseconds, or 0 if the kernel would not say. */
+static long pulse_process_start_ms(void) {
+    int mib[4] = { CTL_KERN, KERN_PROC, KERN_PROC_PID, getpid() };
+    struct kinfo_proc info;
+    size_t size = sizeof(info);
+    if (sysctl(mib, 4, &info, &size, NULL, 0) != 0) return 0;
+    struct timeval started = info.kp_proc.p_starttime;
+    return (long)started.tv_sec * 1000L + (long)started.tv_usec / 1000L;
+}
+
+/** Physical footprint in bytes — what jetsam decides on — or 0 if unavailable. */
+static long pulse_phys_footprint(void) {
+    task_vm_info_data_t info;
+    mach_msg_type_number_t count = TASK_VM_INFO_COUNT;
+    if (task_info(mach_task_self(), TASK_VM_INFO, (task_info_t)&info, &count) != KERN_SUCCESS) return 0;
+    return (long)info.phys_footprint;
+}

@@ -39,6 +39,8 @@ fun Runtime.reportMonitorInstallation(): Int {
             "expected_count" to health.expectedCount,
             "hooked_count" to health.hookedCount,
             "pending_count" to health.pending.size,
+            "observation_capacity" to health.observationCapacity,
+            "dropped_observations_total" to health.droppedObservations,
             "watching" to watching.map { "${it.className}.${it.selector}" }.distinct().joinToString(","),
             "pending" to health.pending.map { "${it.className}.${it.selector}" }.joinToString(","),
         ),
@@ -72,6 +74,17 @@ fun Runtime.retryPendingHooks(): Int {
 
 fun Runtime.reportSensitiveApiObservations(): Int {
     val observations = SensitiveApiMonitor.drain()
+    val health = SensitiveApiMonitor.health()
+    if (health.droppedObservations > 0) {
+        recordBehavior(
+            name = "runtime_monitor_buffer",
+            attributes = mapOf(
+                "observation_capacity" to health.observationCapacity,
+                "queued_observations" to health.queuedObservations,
+                "dropped_observations_total" to health.droppedObservations,
+            ),
+        )
+    }
     // Resolve UUIDs off the hook path. dyld enumeration is cheap here on the periodic reporter,
     // but would be inappropriate inside every intercepted system call.
     val imageUuids = loadedModules().associate { it.name to it.imageUuid }

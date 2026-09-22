@@ -324,6 +324,9 @@ object SensitiveApiMonitor {
         val expectedCount: Int,
         val hookedCount: Int,
         val pending: List<SensitiveApi>,
+        val observationCapacity: Int = OBSERVATION_CAPACITY,
+        val queuedObservations: Int = 0,
+        val droppedObservations: Long = 0,
     )
 
     private data class InstalledHook(
@@ -335,7 +338,16 @@ object SensitiveApiMonitor {
     )
 
     // Written from hooks that run on whatever thread the caller is on, read by drain().
-    private val observations = mutableMapOf<String, Observation>()
+    internal const val OBSERVATION_CAPACITY = 512
+    private data class RawObservation(
+        val api: SensitiveApi,
+        val frames: LongArray,
+        val detail: String?,
+        val observedAt: Long,
+    )
+    private val observations = ArrayDeque<RawObservation>(OBSERVATION_CAPACITY)
+    private var capturesInFlight = 0
+    private var droppedObservations = 0L
     private val lock = kotlin.concurrent.AtomicInt(0)
 
     /**
@@ -367,6 +379,8 @@ object SensitiveApiMonitor {
             expectedCount = expected.distinctBy { it.className to it.selector }.size,
             hookedCount = installedBySelector.values.sumOf { it.size },
             pending = pending.distinctBy { it.className to it.selector },
+            queuedObservations = observations.size + capturesInFlight,
+            droppedObservations = droppedObservations,
         )
     }
 
@@ -485,8 +499,29 @@ object SensitiveApiMonitor {
     }
 
     /** Take everything observed so far and clear it, so each drain reports only new activity. */
-    fun drain(): List<Observation> = withLock {
-        observations.values.map { it.copy() }.also { observations.clear() }
+    fun drain(): List<Observation> {
+        val snapshots = withLock { observations.toList().also { observations.clear() } }
+        // 解析与聚合在消费线程完成，最多处理一份固定容量快照。
+        val aggregated = mutableMapOf<List<String?>, Observation>()
+        for (snapshot in snapshots) {
+            val caller = CallerAttribution.resolve(snapshot.frames)
+            if (caller.image == null) continue
+            val api = snapshot.api
+            val key = listOf(api.className, api.selector, api.eventName, caller.image,
+                caller.symbol, caller.stackFingerprint, snapshot.detail)
+            val existing = aggregated[key]
+            if (existing == null) {
+                aggregated[key] = Observation(
+                    api.eventName, api.className, api.selector, caller.image, caller.symbol,
+                    caller.imageOffset, caller.stackFingerprint, caller.callPath, snapshot.detail,
+                    1, snapshot.observedAt, snapshot.observedAt,
+                )
+            } else {
+                existing.count++
+                existing.lastSeenMs = maxOf(existing.lastSeenMs, snapshot.observedAt)
+            }
+        }
+        return aggregated.values.toList()
     }
 
     /**
@@ -495,34 +530,32 @@ object SensitiveApiMonitor {
      * call back into the API being hooked.
      */
     private fun record(api: SensitiveApi, self: COpaquePointer?, nowMs: Long) {
-        val caller = CallerAttribution.caller(skip = 2)
-        // Calls made by PulseKit itself eventually unwind into Foundation/libdispatch. Those
-        // system frames are not plugin evidence. If no other non-system image exists in the
-        // captured path, suppress the observation rather than inventing an unattributed finding.
-        if (caller.image == null) return
+        // 包括尚在采集中的槽位，保证并发调用也不能突破容量；满载时跳过昂贵工作。
+        val accepted = withLock {
+            if (observations.size + capturesInFlight >= OBSERVATION_CAPACITY) {
+                droppedObservations++
+                false
+            } else {
+                capturesInFlight++
+                true
+            }
+        }
+        if (!accepted) return
         // A detail separates observations that are genuinely different — two hosts are two
         // findings, not one with a count of two. Failures are swallowed: a detail that cannot be
         // read is a missing label, never a reason to disturb the call being observed.
-        val detail = try {
-            api.detailOf?.invoke(self)
+        var snapshot: RawObservation? = null
+        try {
+            val frames = CallerAttribution.capture(skip = 2)
+            val detail = runCatching { api.detailOf?.invoke(self)?.take(480) }.getOrNull()
+            snapshot = RawObservation(api, frames, detail, nowMs)
         } catch (_: Throwable) {
-            null
-        }
-        // Keep distinct internal plugin entry points distinct. An ad SDK reading IDFV during
-        // startup and reading it again immediately before upload are different actions even
-        // though they end at the same system selector.
-        val key = "${api.eventName}|${caller.image}|${caller.symbol ?: ""}|" +
-            "${caller.stackFingerprint ?: ""}|${detail ?: ""}"
-        withLock {
-            val existing = observations[key]
-            if (existing == null) {
-                observations[key] = Observation(
-                    api.eventName, api.className, api.selector, caller.image, caller.symbol,
-                    caller.imageOffset, caller.stackFingerprint, caller.callPath, detail, 1, nowMs, nowMs,
-                )
-            } else {
-                existing.count++
-                existing.lastSeenMs = nowMs
+            // 观测失败不影响原 API 的调用及返回值。
+        } finally {
+            withLock {
+                capturesInFlight--
+                val captured = snapshot
+                if (captured != null) observations.addLast(captured) else droppedObservations++
             }
         }
     }

@@ -30,6 +30,50 @@ import kotlin.test.assertTrue
 class MonitorDispatchTest {
 
     @Test
+    fun observationQueueIsBoundedAndRecoversAfterDrain() {
+        SensitiveApiMonitor.install()
+        SensitiveApiMonitor.drain()
+        val before = SensitiveApiMonitor.health().droppedObservations
+        val capacity = SensitiveApiMonitor.OBSERVATION_CAPACITY
+        val device = UIDevice.currentDevice
+        repeat(capacity + 20) { device.identifierForVendor }
+        val health = SensitiveApiMonitor.health()
+        assertEquals(capacity, health.queuedObservations)
+        assertEquals(20L, health.droppedObservations - before)
+        val retained = SensitiveApiMonitor.drain().filter { it.eventName == "vendor_id_read" }
+        assertEquals(capacity.toLong(), retained.sumOf { it.count })
+        assertEquals(0, SensitiveApiMonitor.health().queuedObservations)
+        device.identifierForVendor
+        assertEquals(1L, SensitiveApiMonitor.drain().sumOf { it.count })
+    }
+
+    @Test
+    fun concurrentHookCallsCannotExceedTheCapacity() {
+        SensitiveApiMonitor.install()
+        SensitiveApiMonitor.drain()
+        val before = SensitiveApiMonitor.health().droppedObservations
+        val workers = List(4) { Worker.start(name = "monitor-load-$it") }
+        try {
+            val calls = workers.map { worker ->
+                worker.execute(TransferMode.SAFE, { Unit }) {
+                    val device = UIDevice.currentDevice
+                    repeat(256) { device.identifierForVendor }
+                }
+            }
+            calls.forEach { it.result }
+            val health = SensitiveApiMonitor.health()
+            assertEquals(SensitiveApiMonitor.OBSERVATION_CAPACITY, health.queuedObservations)
+            assertEquals(1024L, health.queuedObservations + health.droppedObservations - before)
+            val observations = SensitiveApiMonitor.drain()
+            assertEquals(512L, observations.sumOf { it.count })
+            assertTrue(observations.all { it.callerImage != null && it.callsiteOffset != null })
+        } finally {
+            workers.forEach { it.requestTermination().result }
+            SensitiveApiMonitor.drain()
+        }
+    }
+
+    @Test
     fun anOrdinaryObjcMessageReachesTheReplacement() {
         SensitiveApiMonitor.install()
         SensitiveApiMonitor.drain()
