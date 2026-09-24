@@ -1,0 +1,34 @@
+# dyld's image table and the Objective-C runtime's class metadata. Kotlin/Native's platform.darwin
+# klib exposes the mach task-level _dyld_image_infos plumbing but not the plain <mach-o/dyld.h>
+# enumeration API, so it is bound here. Two consumers: the crash handler reads the image slide
+# (_dyld_get_image_vmaddr_slide) to turn runtime frame addresses back into static ones; the runtime
+# inventory enumerates loaded images and their classes.
+headers = mach-o/dyld.h objc/runtime.h
+package = pulse.dyld
+
+---
+// Keep Objective-C Class/Method pointers opaque at the Kotlin boundary. Kotlin/Native models
+// Class as an Objective-C object; reading a Class[] through that bridge can send forwarding
+// messages to runtime-internal root classes. Inventory only needs C metadata and must never invoke
+// the inspected objects.
+static inline void **pulse_copy_class_list(unsigned int *count) {
+    return (void **)objc_copyClassList(count);
+}
+static inline const char *pulse_class_image(void *cls) {
+    return class_getImageName((Class)cls);
+}
+static inline const char *pulse_class_name(void *cls) {
+    return class_getName((Class)cls);
+}
+static inline void **pulse_copy_instance_methods(void *cls, unsigned int *count) {
+    return (void **)class_copyMethodList((Class)cls, count);
+}
+static inline void **pulse_copy_class_methods(void *cls, unsigned int *count) {
+    return (void **)class_copyMethodList(object_getClass((id)cls), count);
+}
+static inline const char *pulse_method_name(void *method) {
+    return sel_getName(method_getName((Method)method));
+}
+static inline const char *pulse_method_encoding(void *method) {
+    return method_getTypeEncoding((Method)method);
+}

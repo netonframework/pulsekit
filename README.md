@@ -10,16 +10,28 @@ the [msgtrans](../msgtrans-kotlin) long connection (which runs on the [neton-io]
 reactor). The server hands received batches to the Pulse modules → a Redis queue → consumers that
 persist into each module's store.
 
-## Modules
+## Artifact
 
-| module | role |
+One artifact, `com.netonstream:pulsekit`. iOS hosts consume it as the `PulseKit` CocoaPods
+framework (`pod 'PulseKit', :path => '<pulsekit>/pulsekit'` from source); Kotlin/Native consumers
+depend on the Maven coordinate and must compile with the release's Kotlin version (the artifact is
+a klib).
+
+```kotlin
+dependencies { implementation("com.netonstream:pulsekit:0.1.0") }
+```
+
+The capabilities are packages, not artifacts — whether one runs is `PulseConfig`'s decision
+(`analytics` / `apm` / `runtime`), and the linker strips what a build does not reach:
+
+| package | role |
 |---|---|
-| `pulse-core` | the unified `Event` / `Session` / `Identity` model, `PulseConfig`, bounded `EventBuffer`, `EventCodec` (JSON), `EventSink` boundary, and the `PulseClient` batch/flush pipeline. No transport dependency, so capabilities stay link-time independent. |
-| `pulse-analytics` | U-App class: `track` business events, `identify`, automatic lifecycle (session/launch). |
-| `pulse-apm` | U-APM / Bugly class: errors, crashes, ANR, startup and network performance reporting surface. |
-| `pulse-runtime` | Opt-in Apple runtime inventory and sensitive API observation, with caller/module attribution. |
-| `pulse-transport` | the `EventSink` backed by the msgtrans long connection (batch → ingest request). |
-| `pulse-sdk` | batteries-included entry (`Pulse.start` / `track` / `identify`) wiring the above. |
+| `pulse.core` | the unified `Event` / `Session` / `Identity` model, `PulseConfig`, bounded `EventBuffer`, durable outbox, `EventCodec` (JSON), `EventSink` boundary, and the `PulseClient` batch/flush pipeline with the server-driven collection policy. |
+| `pulse.analytics` | U-App class: `track` business events, `identify`, automatic lifecycle (session/launch/foreground/background). |
+| `pulse.apm` | U-APM / Bugly class: errors, crashes (signals and uncaught Objective-C exceptions), performance samples and gauges. |
+| `pulse.runtime` | Opt-in Apple runtime inventory and sensitive API observation, with caller/module attribution. |
+| `pulse.transport` | the `EventSink` backed by the msgtrans long connection (batch → ingest request, heartbeat). |
+| `pulse` (`PulseSDK`, `Pulse`) | batteries-included entry wiring the above, plus what the SDK measures on its own: launch time, main-thread hangs, memory footprint, lifecycle. |
 
 Naming is deliberately neutral (Pulse / analytics / apm / runtime / context); the client never
 labels events as first/system/third-party — the server attributes them.
@@ -87,9 +99,8 @@ header value, and rejects decompression output beyond its configured limit.
 ## Build and test
 
 ```bash
-./gradlew :pulse-core:macosArm64Test        # model / buffer / codec / pipeline
-./gradlew :pulse-sdk:macosArm64Test          # end-to-end: Pulse.start -> msgtrans -> server decode
-./gradlew :pulse-sdk:linkDebugTestLinuxX64   # cross-compile for Linux
+./gradlew :pulsekit:macosArm64Test          # model / pipeline / crash / runtime / end-to-end Pulse.start -> msgtrans
+./gradlew :pulsekit:linkDebugTestLinuxX64   # cross-compile for Linux
 ```
 
 ## Status

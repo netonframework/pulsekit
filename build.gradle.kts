@@ -17,12 +17,7 @@ allprojects {
 // must compile with the same Kotlin version as the publisher.
 val unpublished = setOf<String>()
 val pomDescriptions = mapOf(
-    "pulsekit-core" to "PulseKit - the unified Event/Session/Identity model, bounded buffer, durable outbox and batch/flush pipeline; no transport dependency",
-    "pulsekit-analytics" to "PulseKit - product analytics: business events, identify, automatic session and launch lifecycle",
-    "pulsekit-apm" to "PulseKit - errors, crashes (signal and uncaught-exception capture), performance samples and gauges",
-    "pulsekit-runtime" to "PulseKit - opt-in Apple runtime inventory and sensitive-API observation with caller attribution",
-    "pulsekit-transport" to "PulseKit - the EventSink over the msgtrans long connection: batch upload, heartbeat, server-driven collection policy",
-    "pulsekit-sdk" to "PulseKit - batteries-included SDK entry for Kotlin/Native and the PulseKit iOS framework: analytics, APM and runtime observation with automatic launch-time, hang, memory and lifecycle collection"
+    "pulsekit" to "PulseKit - analytics, APM and runtime observation SDK for Kotlin/Native and iOS: business events and lifecycle, crash and uncaught-exception capture, automatic launch-time / hang / memory collection, opt-in runtime inventory, batched upload over the msgtrans long connection with server-driven collection policy"
 )
 
 subprojects {

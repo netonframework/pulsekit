@@ -1,4 +1,0 @@
-# _dyld_get_image_vmaddr_slide is not in the platform.darwin klib. The crash handler needs it to
-# turn a runtime frame address back into the static address a symbol table is written against.
-headers = mach-o/dyld.h
-package = pulse.apm.dyld
