@@ -129,3 +129,7 @@ Current boundaries:
 
 The iOS third-party audit evidence model, privacy boundary, known coverage gaps, and delivery order
 are defined in [IOS_RUNTIME_AUDIT.md](IOS_RUNTIME_AUDIT.md). Android work is intentionally deferred.
+
+## License
+
+[Apache License 2.0](LICENSE).
