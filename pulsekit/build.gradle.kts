@@ -44,7 +44,7 @@ kotlin {
         summary = "PulseKit analytics, APM and runtime SDK"
         homepage = "https://github.com/netonframework/pulsekit"
         license = "Apache-2.0"
-        authors = "Netonstream"
+        authors = "{ 'zoujiaqing' => 'zoujiaqing@gmail.com' }"
         version = project.version.toString()
         ios.deploymentTarget = "14.0"
         framework {

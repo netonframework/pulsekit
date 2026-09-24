@@ -3,7 +3,7 @@ Pod::Spec.new do |spec|
     spec.version                  = '0.1.0'
     spec.homepage                 = 'https://github.com/netonframework/pulsekit'
     spec.source                   = { :http=> ''}
-    spec.authors                  = 'Netonstream'
+    spec.authors                  = { 'zoujiaqing' => 'zoujiaqing@gmail.com' }
     spec.license                  = 'Apache-2.0'
     spec.summary                  = 'PulseKit analytics, APM and runtime SDK'
     spec.vendored_frameworks      = 'build/cocoapods/framework/PulseKit.framework'
