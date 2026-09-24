@@ -1,7 +1,6 @@
 package pulse.core
 
 import app.cash.sqldelight.driver.native.NativeSqliteDriver
-import platform.posix.mkdir
 import pulse.db.PulseDatabase
 
 /** Durable iOS/Android-ready outbox backed by SQLDelight and the platform SQLite library. */
@@ -65,9 +64,12 @@ class SqlDelightEventOutbox(
         while (cursor <= path.length) {
             val slash = path.indexOf('/', cursor).let { if (it < 0) path.length else it }
             val part = path.substring(0, slash)
-            if (part.isNotEmpty()) mkdir(part, 493u) // 0755; EEXIST is expected on restart.
+            if (part.isNotEmpty()) makeDirectory(part) // EEXIST is expected on restart.
             if (slash == path.length) break
             cursor = slash + 1
         }
     }
 }
+
+/** Create one directory level; already-exists is not an error. Implemented per platform. */
+internal expect fun makeDirectory(path: String)

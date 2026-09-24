@@ -1,20 +1,10 @@
-@file:OptIn(ExperimentalForeignApi::class)
-
 package pulse.core
 
-import kotlinx.cinterop.ExperimentalForeignApi
-import kotlinx.cinterop.alloc
-import kotlinx.cinterop.memScoped
-import kotlinx.cinterop.ptr
-import platform.posix.gettimeofday
-import platform.posix.timeval
 import kotlin.random.Random
 
-actual fun nowMillis(): Long = memScoped {
-    val tv = alloc<timeval>()
-    gettimeofday(tv.ptr, null)
-    tv.tv_sec.toLong() * 1000L + tv.tv_usec.toLong() / 1000L
-}
+// nowMillis() is implemented per platform (Platform.apple.kt / Platform.linux.kt): timeval's
+// field widths differ between Apple and Linux, and the shared native source set is compiled once
+// against the commonized libc, which cannot express that.
 
 private const val HEX = "0123456789abcdef"
 

@@ -7,8 +7,8 @@ kotlin {
     iosArm64(); iosSimulatorArm64(); iosX64()
     sourceSets {
         commonMain.dependencies {
-            api(project(":pulse-core"))
-            api("com.netonstream.msgtrans:msgtrans-transport")
+            api(project(":pulsekit-core"))
+            api("com.netonstream:msgtrans:0.1.0")
             api("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2")
         }
         commonTest.dependencies { implementation(kotlin("test")) }

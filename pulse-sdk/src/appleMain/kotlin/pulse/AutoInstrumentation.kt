@@ -139,8 +139,10 @@ internal class AutoInstrumentation(
                     reportedEpisode = true
                     pulse.apm.recordError(
                         "main_thread_hang",
-                        "主线程 ${blockedMs} ms 未响应" +
-                            if (answered == 0L) "（仍未恢复，至少 $blockedMs ms）" else "",
+                        // English, like every other message the SDK writes: the console
+                        // localises for its reader, the wire carries one neutral form.
+                        if (answered == 0L) "main thread unresponsive for at least $blockedMs ms (not yet recovered)"
+                        else "main thread unresponsive for $blockedMs ms",
                         stack = null,
                         attributes = mapOf("blocked_ms" to blockedMs, "recovered" to (answered != 0L)),
                     )

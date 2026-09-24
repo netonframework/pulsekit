@@ -45,11 +45,11 @@ kotlin {
 
     sourceSets {
         commonMain.dependencies {
-            api(project(":pulse-core"))
-            api(project(":pulse-analytics"))
-            api(project(":pulse-apm"))
-            api(project(":pulse-runtime"))
-            api(project(":pulse-transport"))
+            api(project(":pulsekit-core"))
+            api(project(":pulsekit-analytics"))
+            api(project(":pulsekit-apm"))
+            api(project(":pulsekit-runtime"))
+            api(project(":pulsekit-transport"))
         }
         commonTest.dependencies {
             implementation(kotlin("test"))

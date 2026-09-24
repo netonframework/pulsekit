@@ -13,14 +13,14 @@ Pod::Spec.new do |spec|
         raise "
         Kotlin framework 'PulseKit' doesn't exist yet, so a proper Xcode project can't be generated.
         'pod install' should be executed after running ':generateDummyFramework' Gradle task:
-            ./gradlew :pulse-sdk:generateDummyFramework
+            ./gradlew :pulsekit-sdk:generateDummyFramework
         Alternatively, proper pod installation is performed during Gradle sync in the IDE (if Podfile location is set)"
     end
     spec.xcconfig = {
         'ENABLE_USER_SCRIPT_SANDBOXING' => 'NO',
     }
     spec.pod_target_xcconfig = {
-        'KOTLIN_PROJECT_PATH' => ':pulse-sdk',
+        'KOTLIN_PROJECT_PATH' => ':pulsekit-sdk',
         'PRODUCT_MODULE_NAME' => 'PulseKit',
     }
     spec.script_phases = [

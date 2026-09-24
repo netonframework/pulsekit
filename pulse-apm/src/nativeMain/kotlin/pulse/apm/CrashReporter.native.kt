@@ -13,9 +13,6 @@ import kotlinx.cinterop.nativeHeap
 import kotlinx.cinterop.set
 import kotlinx.cinterop.staticCFunction
 import kotlinx.cinterop.toKString
-import platform.posix.O_CREAT
-import platform.posix.O_TRUNC
-import platform.posix.O_WRONLY
 import platform.posix.SIGABRT
 import platform.posix.SIGBUS
 import platform.posix.SIGFPE
@@ -29,8 +26,6 @@ import platform.posix.fclose
 import platform.posix.fsync
 import platform.posix.fgets
 import platform.posix.fopen
-import platform.posix.mkdir
-import platform.posix.open
 import platform.posix.opendir
 import platform.posix.raise
 import platform.posix.readdir
@@ -81,10 +76,10 @@ actual object CrashReporter {
 
     actual fun install(storageDir: String, sessionId: String) {
         if (installed) return
-        mkdir(storageDir, 493u)     // 0755; already-exists is the normal case
+        makeDirectory(storageDir)     // 0755; already-exists is the normal case
         // O_TRUNC: this run owns the file. Anything a previous run left must already have been
         // taken by drainPending(), which is why the SDK calls that first.
-        recordFd = open("$storageDir/$RECORD_NAME", O_WRONLY or O_CREAT or O_TRUNC, 420)
+        recordFd = openRecordFile("$storageDir/$RECORD_NAME")
         if (recordFd < 0) return
         sessionBuf = cstr(sessionId)
         sessionLen = sessionId.length
@@ -244,3 +239,13 @@ actual object CrashReporter {
         write(fd, scr, len.toULong())
     }
 }
+
+// mode_t is 16-bit on Apple and 32-bit on Linux. The shared native source set is compiled once
+// against the commonized libc for publishing, and that compilation cannot express a call whose
+// parameter width differs per platform — so the two mode-taking calls live in per-platform files.
+
+/** mkdir(2) with 0755; already-exists is not an error. */
+internal expect fun makeDirectory(path: String)
+
+/** open(2) O_WRONLY|O_CREAT|O_TRUNC with 0644, returning the descriptor or -1. */
+internal expect fun openRecordFile(path: String): Int

@@ -13,7 +13,7 @@ kotlin {
     }
 
     sourceSets {
-        commonMain.dependencies { api(project(":pulse-core")) }
+        commonMain.dependencies { api(project(":pulsekit-core")) }
         commonTest.dependencies {
             implementation(kotlin("test"))
             implementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.10.2")

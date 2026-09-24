@@ -11,7 +11,7 @@ kotlin {
         }
     }
     sourceSets {
-        commonMain.dependencies { api(project(":pulse-core")) }
+        commonMain.dependencies { api(project(":pulsekit-core")) }
         commonTest.dependencies { implementation(kotlin("test")) }
     }
 }
