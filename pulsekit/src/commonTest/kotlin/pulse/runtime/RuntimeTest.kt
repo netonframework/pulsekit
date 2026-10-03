@@ -22,12 +22,13 @@ private class CapturingSink : EventSink {
 class RuntimeTest {
 
     private fun clientWith(sink: EventSink, scope: kotlinx.coroutines.CoroutineScope) = PulseClient(
-        PulseConfig(projectId = "t", host = "127.0.0.1", runtime = true, batchMaxEvents = 1000),
+        PulseConfig(projectId = "t", endpoint = "tcp://127.0.0.1", runtime = true, batchMaxEvents = 1000),
         Identity("t", "i", "d"), scope, sink,
     )
 
     @Test
     fun baselineReportsOneSummaryAndBundledArtifactEvidence() = runTest {
+        if (!pulse.platformListsImages()) return@runTest
         val sink = CapturingSink()
         val client = clientWith(sink, this)
         val runtime = Runtime(client)
@@ -64,6 +65,7 @@ class RuntimeTest {
 
     @Test
     fun anImageOutsideTheBaselineIsReportedOnceAndThenFoldedIn() = runTest {
+        if (!pulse.platformListsImages()) return@runTest
         val sink = CapturingSink()
         val client = clientWith(sink, this)
         // No baseline captured, so *every* loaded image counts as new: this exercises the diff and

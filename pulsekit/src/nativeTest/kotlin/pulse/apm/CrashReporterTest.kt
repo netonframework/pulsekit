@@ -28,7 +28,7 @@ import kotlin.test.assertTrue
 class CrashReporterTest {
 
     private var counter = 0
-    private fun tempDir(): String = "/tmp/pulse-crash-test-${getpid()}-${time(null)}-${counter++}"
+    private fun tempDir(): String = "${pulse.testTempRoot()}/pulse-crash-test-${getpid()}-${time(null)}-${counter++}"
 
     /** Runs [body] in a forked child and waits for it. Returns the child's raw wait status. */
     private fun inChild(body: () -> Unit): Int = memScoped {

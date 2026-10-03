@@ -1,3 +1,5 @@
+import org.jetbrains.kotlin.gradle.plugin.mpp.KotlinNativeTarget
+
 plugins { kotlin("multiplatform"); kotlin("plugin.serialization"); kotlin("native.cocoapods"); id("app.cash.sqldelight") }
 repositories { mavenCentral() }
 
@@ -5,12 +7,26 @@ repositories { mavenCentral() }
 // transport) but ship together: the only consumer shape is "the whole SDK" — the iOS framework
 // already bundled everything — and the linker strips unused code from one klib exactly as well as
 // from six. Whether a capability runs is PulseConfig's decision, not the dependency list's.
+val generateSdkVersion = tasks.register("generateSdkVersion") {
+    val version = project.version.toString()
+    val dir = layout.buildDirectory.dir("generated/sdkVersion")
+    inputs.property("version", version)
+    outputs.dir(dir)
+    doLast {
+        val file = dir.get().file("pulse/core/SdkVersion.kt").asFile
+        file.parentFile.mkdirs()
+        file.writeText("package pulse.core\n\ninternal const val PULSEKIT_VERSION: String = \"$version\"\n")
+    }
+}
+
 kotlin {
     listOf(macosArm64(), macosX64(), linuxX64(), linuxArm64()).forEach { t ->
         // SQLDelight's native driver needs the system library at link time and does not
         // propagate the option; the smoke binary exists for the integration test.
         t.binaries.configureEach { linkerOpts("-lsqlite3") }
         t.binaries.executable("pulseSmoke") { entryPoint = "pulse.pulseSmokeMain" }
+        // A stand-in ingest server for device and emulator end-to-end runs; see IngestStub.kt.
+        t.binaries.executable("pulseIngestStub") { entryPoint = "pulse.pulseIngestStubMain" }
     }
     // iOS: the SDK ships as an Objective-C framework, not as a klib.
     //
@@ -53,24 +69,69 @@ kotlin {
         }
     }
 
+    // Android, through the JVM: the same SDK compiled for the JVM (no native code). The Android
+    // platform layer — lifecycle, main-thread watchdog, PackageManager, SharedPreferences, the
+    // system SQLite — is the pulsekit-android module, written in Java the way the iOS platform
+    // layer is the Objective-C framework surface. Bytecode 1.8 for Android minSdk 21.
+    // The JVM artifact must work in Android apps built with an older Kotlin (KuiklyUI pins hosts to
+    // 2.1). Such a host never compiles against these classes, but Gradle aligns its whole classpath
+    // to the highest kotlin-stdlib anything asks for, and its compiler reads stdlib metadata at most
+    // one version ahead. So the JVM build asks for stdlib 2.2.21 and uses no stdlib API newer than
+    // 2.2 (API 2.1 is deprecated); native klibs are unaffected (they follow the compiler version).
+    coreLibrariesVersion = "2.2.21"
+    jvm {
+        compilerOptions {
+            jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_1_8)
+            apiVersion.set(org.jetbrains.kotlin.gradle.dsl.KotlinVersion.KOTLIN_2_2)
+        }
+    }
+
+    // See src/nativeInterop/cinterop/posixshim.def — fixed-width POSIX calls for shared code.
+    targets.withType<KotlinNativeTarget>().configureEach {
+        compilations.getByName("main").cinterops.create("posixshim") {
+            definitionFile.set(file("src/nativeInterop/cinterop/posixshim.def"))
+        }
+    }
+
+    // Two shared layers. "client" is the host-app SDK — the PulseSDK facade and automatic
+    // instrumentation — which Apple and the JVM (Android) share line for line. "systemSqlite" is
+    // everywhere SQLDelight's native driver can link the operating system's SQLite.
+    applyDefaultHierarchyTemplate {
+        common {
+            group("client") { group("apple"); withJvm() }
+            group("native") {
+                group("systemSqlite") { group("apple"); group("linux") }
+            }
+        }
+    }
+
     sourceSets {
+        // The SDK reports its own version on connect and on every batch; generated from the Gradle
+        // version so the two cannot drift apart.
+        commonMain { kotlin.srcDir(generateSdkVersion) }
         commonMain.dependencies {
             api("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
             api("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2")
-            api("com.netonstream:msgtrans:${project.version}")
+            api("com.netonstream:msgtrans:0.2.0")
         }
-        nativeMain.dependencies {
-            implementation("app.cash.sqldelight:native-driver:2.3.2")
+        getByName("systemSqliteMain").dependencies {
+            implementation("app.cash.sqldelight:native-driver:2.2.1")
         }
         commonTest.dependencies {
             implementation(kotlin("test"))
             implementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.10.2")
         }
+        // The JVM has no SQLite of its own: Android hands the SDK its framework driver (see
+        // pulse.host.HostEnvironment); tests use the JDBC driver.
+        jvmTest.dependencies {
+            implementation("app.cash.sqldelight:sqlite-driver:2.2.1")
+        }
     }
 }
 
 sqldelight {
-    linkSqlite.set(true)
+    // Each Apple/Linux binary above links -lsqlite3 itself, explicitly.
+    linkSqlite.set(false)
     databases {
         create("PulseDatabase") {
             packageName.set("pulse.db")

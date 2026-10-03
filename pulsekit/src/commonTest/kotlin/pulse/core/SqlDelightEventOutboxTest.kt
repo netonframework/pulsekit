@@ -1,18 +1,18 @@
-@file:OptIn(kotlinx.cinterop.ExperimentalForeignApi::class)
-
 package pulse.core
 
-import platform.posix.rmdir
-import platform.posix.unlink
+import pulse.deleteTestDirectory
+import pulse.installTestSqlite
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class SqlDelightEventOutboxTest {
+    init { installTestSqlite() }
+
     @Test
     fun survivesCloseAndOnlyAckDeletes() {
-        val dir = "/tmp/pulse-outbox-${newId()}"
+        val dir = "${pulse.testTempRoot()}/pulse-outbox-${newId()}"
         val now = nowMillis()
         try {
             SqlDelightEventOutbox(dir).use { first ->
@@ -34,10 +34,7 @@ class SqlDelightEventOutboxTest {
                 assertFalse(reopened.hasPending())
             }
         } finally {
-            unlink("$dir/pulse-outbox.db")
-            unlink("$dir/pulse-outbox.db-wal")
-            unlink("$dir/pulse-outbox.db-shm")
-            rmdir(dir)
+            deleteTestDirectory(dir)
         }
     }
 

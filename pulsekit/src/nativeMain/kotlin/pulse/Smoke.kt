@@ -24,7 +24,7 @@ fun pulseSmokeMain(args: Array<String>) {
     val buildNumber = args.getOrNull(4)?.toLongOrNull() ?: 100L
     runReactor {
         val pulse = Pulse.start(this, PulseConfig(
-            projectId = "vip-mall", host = host, port = port,
+            projectId = "vip-mall", endpoint = "tcp://$host:$port",
             runtime = true,
             platform = "ios", packageName = "com.example.vipmall",
             buildNumber = buildNumber, appVersion = "1.0.0-smoke",

@@ -15,7 +15,7 @@ import pulse.procmetrics.pulse_process_start_ms
  */
 
 /** When the kernel started this process, epoch ms, or 0 if it cannot be read. */
-internal fun processStartMillis(): Long = pulse_process_start_ms()
+internal actual fun processStartMillis(): Long = pulse_process_start_ms()
 
 /** Physical footprint in bytes — the number iOS jetsams on — or 0 if unavailable. */
-internal fun residentMemoryBytes(): Long = pulse_phys_footprint()
+internal actual fun residentMemoryBytes(): Long = pulse_phys_footprint()

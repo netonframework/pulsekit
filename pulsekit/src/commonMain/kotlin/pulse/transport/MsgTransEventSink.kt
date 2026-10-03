@@ -96,7 +96,7 @@ class MsgTransEventSink private constructor(
             val connected = checkNotNull(connectResult) { "Pulse client connection is not registered" }
             val request = ClientHeartbeatRequest(
                 connectionId = connected.connectionId,
-                clientTimeMs = kotlin.time.Clock.System.now().toEpochMilliseconds(),
+                clientTimeMs = pulse.core.nowMillis(),
             )
             connection.request(
                 json.encodeToString(ClientHeartbeatRequest.serializer(), request).encodeToByteArray(),
@@ -147,7 +147,7 @@ class MsgTransEventSink private constructor(
         check(!closed) { "Pulse event sink is closed" }
         conn?.let { return@withLock it }
         val connection = Transport.connect(
-            scope, config.host, config.port,
+            scope, config.server.host, config.server.port,
             ConnectionConfig(requestTimeoutMillis = 15_000, maxInFlightRequests = 8),
         )
         try {

@@ -46,7 +46,7 @@ class PulseCoreTest {
     fun wireIdentityCarriesTheRuntimePackageForServerPolicy() {
         val config = PulseConfig(
             projectId = "pulse_app_123",
-            host = "127.0.0.1",
+            endpoint = "tcp://127.0.0.1",
             platform = "ios",
             packageName = "com.example.resigned",
         )
@@ -67,7 +67,7 @@ class PulseCoreTest {
         }
         val client = PulseClient(
             PulseConfig(
-                projectId = "t", host = "127.0.0.1", batchMaxEvents = 100,
+                projectId = "t", endpoint = "tcp://127.0.0.1", batchMaxEvents = 100,
                 retryBaseDelayMs = 0, retryMaxDelayMs = 0,
             ),
             Identity("t", "i", "d"), this, sink,
@@ -91,7 +91,7 @@ class PulseCoreTest {
         }
         val client = PulseClient(
             PulseConfig(
-                projectId = "t", host = "127.0.0.1", batchMaxEvents = 100,
+                projectId = "t", endpoint = "tcp://127.0.0.1", batchMaxEvents = 100,
                 retryBaseDelayMs = 0, retryMaxDelayMs = 0,
             ),
             Identity("t", "i", "d"), this, sink,
@@ -117,7 +117,7 @@ class PulseCoreTest {
         }
         val client = PulseClient(
             PulseConfig(
-                projectId = "t", host = "127.0.0.1", batchMaxEvents = 100,
+                projectId = "t", endpoint = "tcp://127.0.0.1", batchMaxEvents = 100,
                 uploadCompression = UploadCompression.Zlib, compressionMinBytes = 1,
                 retryBaseDelayMs = 0, retryMaxDelayMs = 0,
             ),
@@ -140,7 +140,7 @@ class PulseCoreTest {
         }
         val client = PulseClient(
             PulseConfig(
-                projectId = "t", host = "127.0.0.1",
+                projectId = "t", endpoint = "tcp://127.0.0.1",
                 batchMaxEvents = 100, batchMaxBytes = limit,
                 retryBaseDelayMs = 0, retryMaxDelayMs = 0,
             ),
@@ -174,7 +174,7 @@ class PulseCoreTest {
         }
         val client = PulseClient(
             PulseConfig(
-                projectId = "t", host = "127.0.0.1",
+                projectId = "t", endpoint = "tcp://127.0.0.1",
                 batchMaxEvents = 100, batchMaxBytes = 600,
                 retryBaseDelayMs = 0, retryMaxDelayMs = 0,
             ),
@@ -198,7 +198,7 @@ class PulseCoreTest {
     fun offlineFlushPersistsEveryBatchWithoutAcknowledging() = runTest {
         val outbox = InMemoryEventOutbox()
         val client = PulseClient(
-            PulseConfig(projectId = "offline", host = "127.0.0.1", batchMaxEvents = 2),
+            PulseConfig(projectId = "offline", endpoint = "tcp://127.0.0.1", batchMaxEvents = 2),
             Identity("offline", "i", "d"), this, outbox = outbox,
         )
         repeat(5) { client.emit(EventKind.Analytics, "offline-$it") }
@@ -228,7 +228,7 @@ class PulseCoreTest {
             override suspend fun close() {}
         }
         val client = PulseClient(
-            PulseConfig(projectId = "t", host = "127.0.0.1"), Identity("t", "i", "d"), this, sink,
+            PulseConfig(projectId = "t", endpoint = "tcp://127.0.0.1"), Identity("t", "i", "d"), this, sink,
         )
         client.emit(EventKind.Analytics, "one")
         val first = launch { client.flushOnce() }
@@ -255,7 +255,7 @@ class PulseCoreTest {
             override suspend fun close() {}
         }
         val client = PulseClient(
-            PulseConfig(projectId = "t", host = "127.0.0.1"),
+            PulseConfig(projectId = "t", endpoint = "tcp://127.0.0.1"),
             Identity("t", "i", "d"), this, sink, outbox = outbox,
         )
         client.emit(EventKind.Analytics, "keep")

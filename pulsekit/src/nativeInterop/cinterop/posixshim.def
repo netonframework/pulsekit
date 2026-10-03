@@ -1,0 +1,62 @@
+# POSIX calls the shared source sets need, behind fixed-width signatures. nativeMain and clientMain
+# are compiled once for every target they cover; write/read count in size_t, time() returns time_t,
+# usleep takes useconds_t and directory entries come through DIR, and none of these has one shape
+# across the 32- and 64-bit Android ABIs, so code shared by all of them cannot call them directly.
+# Same approach as neton-io's posixshim.def.
+package = pulse.posixshim
+---
+#include <dirent.h>
+#include <fcntl.h>
+#include <string.h>
+#include <time.h>
+#include <unistd.h>
+
+/** time(2) in whole seconds, widened: time_t is 32-bit on the 32-bit Android ABIs. */
+static long long pulse_time_seconds(void) {
+    return (long long)time(0);
+}
+
+/** Sleep for micros microseconds. */
+static void pulse_sleep_micros(int micros) {
+    usleep((useconds_t)micros);
+}
+
+/** write(2) of n bytes. Async-signal-safe: the crash handler calls it. */
+static int pulse_write_bytes(int fd, const void *bytes, int n) {
+    return (int)write(fd, bytes, (size_t)n);
+}
+
+/** Read up to cap bytes of the file at path into buf; the count read, or -1. */
+static int pulse_read_file(const char *path, void *buf, int cap) {
+    int fd = open(path, O_RDONLY);
+    if (fd < 0) return -1;
+    int total = 0;
+    while (total < cap) {
+        ssize_t n = read(fd, (char *)buf + total, (size_t)(cap - total));
+        if (n <= 0) break;
+        total += (int)n;
+    }
+    close(fd);
+    return total;
+}
+
+/**
+ * The names in directory path, '\n'-separated, into out. Returns the bytes needed, which may
+ * exceed cap (call again with more room), or -1 if the directory cannot be opened.
+ */
+static int pulse_list_dir(const char *path, char *out, int cap) {
+    DIR *dir = opendir(path);
+    if (!dir) return -1;
+    int len = 0;
+    struct dirent *entry;
+    while ((entry = readdir(dir)) != 0) {
+        int n = (int)strlen(entry->d_name);
+        if (len + n + 1 <= cap) {
+            memcpy(out + len, entry->d_name, (size_t)n);
+            out[len + n] = '\n';
+        }
+        len += n + 1;
+    }
+    closedir(dir);
+    return len;
+}

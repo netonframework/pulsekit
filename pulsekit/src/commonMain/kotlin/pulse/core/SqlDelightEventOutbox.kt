@@ -1,9 +1,14 @@
 package pulse.core
 
-import app.cash.sqldelight.driver.native.NativeSqliteDriver
+import app.cash.sqldelight.db.QueryResult
+import app.cash.sqldelight.db.SqlDriver
+import app.cash.sqldelight.db.SqlSchema
 import pulse.db.PulseDatabase
 
-/** Durable iOS/Android-ready outbox backed by SQLDelight and the platform SQLite library. */
+/**
+ * Durable outbox backed by SQLDelight: the system SQLite on Apple and Linux, the vendored one on
+ * Android. The schema, queries and bounds are the same everywhere; only [openOutboxDriver] differs.
+ */
 class SqlDelightEventOutbox(
     storageDir: String,
     private val maxBatches: Long = 4_096,
@@ -18,13 +23,7 @@ class SqlDelightEventOutbox(
 
     private val driver = run {
         ensureDirectories(storageDir)
-        NativeSqliteDriver(
-            schema = PulseDatabase.Schema,
-            name = "pulse-outbox.db",
-            onConfiguration = { config ->
-                config.copy(extendedConfig = config.extendedConfig.copy(basePath = storageDir))
-            },
-        )
+        openOutboxDriver(PulseDatabase.Schema, storageDir, OUTBOX_DATABASE_NAME)
     }
     private val queries = PulseDatabase(driver).pulseOutboxQueries
 
@@ -70,6 +69,19 @@ class SqlDelightEventOutbox(
         }
     }
 }
+
+internal const val OUTBOX_DATABASE_NAME = "pulse-outbox.db"
+
+/**
+ * Open (creating or migrating) the SQLite database [name] in [storageDir]. NativeSqliteDriver where
+ * the system has SQLite; a driver over the vendored library on Android. Both use WAL journaling and
+ * a five second busy timeout, and version the schema with `PRAGMA user_version`.
+ */
+internal expect fun openOutboxDriver(
+    schema: SqlSchema<QueryResult.Value<Unit>>,
+    storageDir: String,
+    name: String,
+): SqlDriver
 
 /** Create one directory level; already-exists is not an error. Implemented per platform. */
 internal expect fun makeDirectory(path: String)

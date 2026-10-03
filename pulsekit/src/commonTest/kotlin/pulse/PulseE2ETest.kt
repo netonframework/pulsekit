@@ -1,5 +1,3 @@
-@file:OptIn(kotlinx.cinterop.ExperimentalForeignApi::class)
-
 package pulse
 
 import kotlinx.coroutines.delay
@@ -32,20 +30,21 @@ import kotlin.test.assertTrue
  * decodes real events. Exercises core -> analytics -> transport -> msgtrans on one reactor.
  */
 class PulseE2ETest {
+    init { installTestSqlite() }
+
 
     @Test
     fun offlineStartupPersistsAndReplaysAfterRestartAndReconnect() = runReactor {
         val config = PulseConfig(
-            projectId = "offline-test", host = "127.0.0.1", port = 19611,
+            projectId = "offline-test", endpoint = "tcp://127.0.0.1:19611",
             analytics = false, apm = true, runtime = false,
             batchMaxEvents = 2, flushIntervalMs = 50,
             retryBaseDelayMs = 100, retryMaxDelayMs = 100,
-            storageDir = "/tmp/pulse-offline-${kotlin.random.Random.nextLong()}",
+            storageDir = "${testTempRoot()}/pulse-offline-${kotlin.random.Random.nextLong()}",
         )
         val pulse = withTimeout(1_000) { Pulse.start(this@runReactor, config) }
         try {
-            assertEquals(0, platform.posix.access("${config.storageDir}/crash.record", platform.posix.F_OK),
-                "首次连接前必须已经准备好崩溃记录文件")
+            assertTrue(crashCaptureReady(checkNotNull(config.storageDir)), "首次连接前必须已经准备好崩溃捕获")
             assertEquals(UpdateAction.None, pulse.awaitUpdate(30).action)
             repeat(5) { pulse.track("offline-$it") }
             pulse.client.flushOnce()
@@ -63,7 +62,7 @@ class PulseE2ETest {
         val received = mutableListOf<String>()
         val receivedBatchIds = mutableListOf<String>()
         val replayed = CompletableDeferred<Unit>()
-        val server = Transport.bind(this, "127.0.0.1", config.port) { conn ->
+        val server = Transport.bind(this, "127.0.0.1", config.server.port) { conn ->
             var registered = false
             conn.onRequest { payload, bizType ->
                 when (bizType) {
@@ -158,11 +157,11 @@ class PulseE2ETest {
         val serverJob = launch { server.acceptLoop() }
 
         val pulse = Pulse.start(this, PulseConfig(
-            projectId = "vip-mall", host = "127.0.0.1", port = port,
+            projectId = "vip-mall", endpoint = "tcp://127.0.0.1:$port",
             batchMaxEvents = 3, flushIntervalMs = 200,
             // Never inherit another run's retry schedule or backlog. This test is about the live
             // register -> update-check -> upload flow, not durable outbox recovery.
-            storageDir = "/tmp/pulse-e2e-${kotlin.random.Random.nextLong()}",
+            storageDir = "${testTempRoot()}/pulse-e2e-${kotlin.random.Random.nextLong()}",
         ))
         pulse.identify("100086")
         pulse.track("purchase", mapOf("amount" to 199))

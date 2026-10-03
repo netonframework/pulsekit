@@ -29,7 +29,7 @@ class PulseKitIosTest {
     fun startIsNonBlockingAndStopTearsDown() {
         // A host calls this from the main thread during launch; if it blocked, the app would hang.
         PulseSDK.start(PulseConfig(
-            projectId = "it-lifecycle", host = "127.0.0.1", port = 1,
+            projectId = "it-lifecycle", endpoint = "tcp://127.0.0.1:1",
             apm = false, runtime = false,
         ))
         assertTrue(PulseSDK.isRunning)
@@ -43,7 +43,7 @@ class PulseKitIosTest {
         repeat(3) { run ->
             val dir = "/tmp/pulse-facade-${kotlin.random.Random.nextLong()}"
             PulseSDK.start(PulseConfig(
-                projectId = "facade-offline", host = "127.0.0.1", port = 1,
+                projectId = "facade-offline", endpoint = "tcp://127.0.0.1:1",
                 analytics = false, apm = false, runtime = false,
                 batchMaxEvents = 2, storageDir = dir,
             ))
@@ -72,7 +72,7 @@ class PulseKitIosTest {
 
         PulseSDK.start(
             PulseConfig(
-                projectId = "vip-mall", host = host, port = itPort,
+                projectId = "vip-mall", endpoint = "tcp://$host:$itPort",
                 runtime = true, batchMaxEvents = 1000, flushIntervalMs = 60_000,
             ),
         )

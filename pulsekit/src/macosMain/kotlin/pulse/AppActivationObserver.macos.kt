@@ -1,6 +1,7 @@
 package pulse
 
 import platform.Foundation.NSNotificationCenter
+import pulse.core.nowMillis
 import platform.AppKit.NSApplicationDidBecomeActiveNotification
 import platform.AppKit.NSApplicationDidResignActiveNotification
 
@@ -9,20 +10,20 @@ import platform.AppKit.NSApplicationDidResignActiveNotification
  * the point at which buffered events should be committed, so it plays the same role here.
  */
 internal actual class AppActivationObserver actual constructor(
-    onActive: () -> Unit,
-    onBackground: () -> Unit,
+    onActive: (observedAt: Long) -> Unit,
+    onBackground: (observedAt: Long) -> Unit,
 ) {
     private val center = NSNotificationCenter.defaultCenter
     private val activeToken = center.addObserverForName(
         name = NSApplicationDidBecomeActiveNotification,
         `object` = null,
         queue = null,
-    ) { onActive() }
+    ) { onActive(nowMillis()) }
     private val inactiveToken = center.addObserverForName(
         name = NSApplicationDidResignActiveNotification,
         `object` = null,
         queue = null,
-    ) { onBackground() }
+    ) { onBackground(nowMillis()) }
 
     actual fun close() {
         center.removeObserver(activeToken)

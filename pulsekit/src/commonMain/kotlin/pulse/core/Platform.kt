@@ -3,15 +3,25 @@ package pulse.core
 /** Wall-clock epoch milliseconds. */
 expect fun nowMillis(): Long
 
-/** A fresh unique id (uuid-like) for events, sessions, installations. */
-expect fun newId(): String
+private const val HEX = "0123456789abcdef"
+
+/**
+ * A fresh unique id for events, sessions, installations: a random 128-bit value as 32 hex chars.
+ * Not RFC-4122 formatted; uniqueness is what matters.
+ */
+fun newId(): String {
+    val sb = StringBuilder(32)
+    repeat(32) { sb.append(HEX[kotlin.random.Random.nextInt(16)]) }
+    return sb.toString()
+}
 
 /** Per-app durable directory for the event outbox and next-launch crash record. */
 expect fun defaultPulseStorageDir(projectId: String): String
 
 /**
  * A small key/value store that survives process restarts, used for the device and installation
- * ids. NSUserDefaults on Apple; a file under the user's home on Linux (server/dev hosts).
+ * ids. NSUserDefaults on Apple, SharedPreferences on Android (through the JVM host), a file
+ * under the user's home on Linux (server/dev hosts).
  *
  * Deliberately tiny: the SDK persists two ids and nothing else. It is not a cache and must never
  * hold event payloads or anything sensitive.

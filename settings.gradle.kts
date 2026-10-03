@@ -7,6 +7,11 @@ rootProject.name = "pulsekit-build"
 // removing these two lines resolves them from Maven Central instead.
 includeBuild("../neton-io")
 includeBuild("../msgtrans-kotlin")
-// One module, one artifact: com.netonstream:pulsekit. The root is named differently only so the
+// The SDK itself, one artifact: com.netonstream:pulsekit. The root is named differently only so the
 // module can carry the product name (Gradle does not allow a subproject named like its root).
 include(":pulsekit")
+// The Android facade: a Java API over libpulsekit.so, shipped as an AAR — what the CocoaPods
+// framework is for iOS. Published as com.netonstream:pulsekit-android.
+include(":pulsekit-android")
+// A minimal host app over the AAR, used for emulator/device end-to-end runs. Not published.
+include(":pulsekit-android-sample")

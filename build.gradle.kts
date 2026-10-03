@@ -2,11 +2,15 @@ plugins {
     kotlin("multiplatform") version "2.4.0" apply false
     kotlin("plugin.serialization") version "2.4.0" apply false
     kotlin("native.cocoapods") version "2.4.0" apply false
-    id("app.cash.sqldelight") version "2.3.2" apply false
+    // 2.2.x, not 2.3: SQLDelight 2.3's runtime requires kotlin-stdlib 2.3, which an Android host on
+    // Kotlin 2.1 cannot compile against (see coreLibrariesVersion in pulsekit/build.gradle.kts).
+    id("app.cash.sqldelight") version "2.2.1" apply false
+    id("com.android.library") version "8.13.2" apply false
+    id("com.android.application") version "8.13.2" apply false
 }
 allprojects {
     group = "com.netonstream"
-    version = "0.1.0"
+    version = "0.2.0"
 }
 
 // ---------- Maven Central publishing ----------
@@ -15,9 +19,10 @@ allprojects {
 // build/staging-repo by `publishAllPublicationsToStagingLocalRepository`, and that directory is
 // zipped and uploaded as one Central Portal bundle. Kotlin/Native artifacts are klibs; a consumer
 // must compile with the same Kotlin version as the publisher.
-val unpublished = setOf<String>()
+val unpublished = setOf("pulsekit-android-sample")
 val pomDescriptions = mapOf(
-    "pulsekit" to "PulseKit - analytics, APM and runtime observation SDK for Kotlin/Native and iOS: business events and lifecycle, crash and uncaught-exception capture, automatic launch-time / hang / memory collection, opt-in runtime inventory, batched upload over the msgtrans long connection with server-driven collection policy"
+    "pulsekit" to "PulseKit - analytics, APM and runtime observation SDK for Kotlin/Native, iOS and Android: business events and lifecycle, crash and uncaught-exception capture, automatic launch-time / hang / memory collection, opt-in runtime inventory, batched upload over the msgtrans long connection with server-driven collection policy",
+    "pulsekit-android" to "PulseKit for Android - the Java facade and Android platform layer of the PulseKit SDK (analytics, APM, runtime observation) as an AAR, over the SDK's JVM build"
 )
 
 subprojects {
@@ -28,10 +33,17 @@ subprojects {
     afterEvaluate {
         val sub = this@subprojects
         val publishing = sub.extensions.getByType<org.gradle.api.publish.PublishingExtension>()
+        // Central requires a javadoc jar beside every jar. Dokka is not wired in; as in neton-io,
+        // the jar carries the README, which is where the API is documented.
+        val apiDocsJar = sub.tasks.register<Jar>("apiDocsJar") {
+            archiveClassifier.set("javadoc")
+            from(rootProject.file("README.md"))
+        }
 
         // Only group / version / POM. The KMP plugin owns the artifactIds (one per target plus
         // the root metadata publication); overriding them would make the publications collide.
         publishing.publications.withType<MavenPublication>().configureEach {
+            artifact(apiDocsJar)
             groupId = sub.group.toString()
             version = sub.version.toString()
             pom {

@@ -105,12 +105,13 @@ class Pulse private constructor(
             val pulse = Pulse(client, Analytics(client), apm, runtime)
 
             if (config.apm) {
-                // Report last run's crash first, then take ownership of the record file.
+                // Report last run's crash first; the record file is taken over below.
                 for (crash in CrashReporter.drainPending(dir)) {
                     apm.recordCrash(
                         crash.name,
                         crash.message,
-                        stack = null,
+                        // Only language-level crashes carry a textual stack (Java on Android).
+                        stack = crash.stack,
                         attributes = mapOf(
                             "crashed_session_id" to crash.sessionId,
                             "crashed_at_ms" to crash.timestampMs,
@@ -122,13 +123,18 @@ class Pulse private constructor(
                         ),
                     )
                 }
+            }
+
+            if (config.analytics) { pulse.analytics.sessionStart(); pulse.analytics.appLaunch() }
+            if (config.apm) {
+                // Armed after sessionStart, which replaces the session: a record stamped with the
+                // one before it would name a session no event of this run belongs to, and the
+                // crash could not be joined to what led up to it.
                 CrashReporter.install(dir, client.currentSession.id)
                 // Signals say the process died; this says what threw. Both write a record for the
                 // next launch to upload, so neither depends on the network at the worst moment.
                 installUncaughtExceptionReporter(dir, client.currentSession.id)
             }
-
-            if (config.analytics) { pulse.analytics.sessionStart(); pulse.analytics.appLaunch() }
             // The baseline is taken after the session exists so the inventory joins this session.
             runtime?.captureBaseline()
             // 先启用本地落盘和崩溃处理，再异步连接；首次断网不阻塞宿主事件消费。

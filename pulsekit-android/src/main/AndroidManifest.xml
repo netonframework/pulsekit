@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The SDK talks to the Pulse ingest server over its own TCP connection. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <application>
+        <!-- Gives the SDK the application context at process start; see PulseInitProvider. -->
+        <provider
+            android:name="com.netonstream.pulsekit.PulseInitProvider"
+            android:authorities="${applicationId}.pulsekit-init"
+            android:exported="false" />
+    </application>
+</manifest>

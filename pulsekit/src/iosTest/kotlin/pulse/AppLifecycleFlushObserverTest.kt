@@ -20,7 +20,7 @@ class AppLifecycleFlushObserverTest {
     @Test
     fun lifecycleNotificationsAreConsumedOnlyOnTheReactor() = runReactor {
         val pulse = Pulse.start(this, PulseConfig(
-            projectId = "lifecycle-thread", host = "127.0.0.1", port = 1,
+            projectId = "lifecycle-thread", endpoint = "tcp://127.0.0.1:1",
             analytics = false, apm = false, runtime = false,
             storageDir = "/tmp/pulse-lifecycle-${kotlin.random.Random.nextLong()}",
         ))

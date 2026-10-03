@@ -1,12 +1,7 @@
-@file:OptIn(ExperimentalForeignApi::class, ExperimentalAtomicApi::class)
+@file:OptIn(ExperimentalAtomicApi::class)
 
 package pulse
 
-import kotlinx.cinterop.ExperimentalForeignApi
-import kotlinx.cinterop.alloc
-import kotlinx.cinterop.memScoped
-import kotlinx.cinterop.ptr
-import kotlinx.cinterop.value
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.CoroutineScope
@@ -16,9 +11,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlin.concurrent.atomics.AtomicLong
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
-import platform.darwin.dispatch_async
-import platform.darwin.dispatch_get_main_queue
-import platform.posix.timeval
+import pulse.core.nowMillis
 
 /**
  * What the SDK measures without being asked.
@@ -51,8 +44,8 @@ internal class AutoInstrumentation(
     private data class Activation(val active: Boolean, val observedAt: Long)
     private val lifecycleEvents = Channel<Activation>(32, BufferOverflow.DROP_OLDEST)
 
-    internal fun onActive() { lifecycleEvents.trySend(Activation(true, nowMillisApple())) }
-    internal fun onBackground() { lifecycleEvents.trySend(Activation(false, nowMillisApple())) }
+    internal fun onActive(observedAt: Long = nowMillis()) { lifecycleEvents.trySend(Activation(true, observedAt)) }
+    internal fun onBackground(observedAt: Long = nowMillis()) { lifecycleEvents.trySend(Activation(false, observedAt)) }
 
     /** Written by the main queue, read by the watchdog coroutine — genuinely cross-thread. */
     private val lastPong = AtomicLong(0)
@@ -60,7 +53,7 @@ internal class AutoInstrumentation(
 
     fun install() {
         if (activation != null) return
-        activation = AppActivationObserver(onActive = ::onActive, onBackground = ::onBackground)
+        activation = AppActivationObserver(onActive = { onActive(it) }, onBackground = { onBackground(it) })
         // 系统通知只投递有界消息，状态、事件缓冲和采样统一归 reactor 所有。
         lifecycleJob = scope.launch {
             for (event in lifecycleEvents) {
@@ -79,7 +72,10 @@ internal class AutoInstrumentation(
                 }
             }
         }
-        watchdog = scope.launch { watchMainThread() }
+        // A ping nobody can deliver would read as a permanent freeze, so the watchdog only runs
+        // where the main thread is reachable (always on Apple; once the Android facade attached
+        // the main looper).
+        if (canObserveMainThread()) watchdog = scope.launch { watchMainThread() }
         sampler = scope.launch {
             while (isActive) {
                 delay(MEMORY_SAMPLE_INTERVAL_MS)
@@ -122,14 +118,14 @@ internal class AutoInstrumentation(
         var reportedEpisode = false
         while (scope.isActive) {
             delay(PING_INTERVAL_MS)
-            val sentAt = nowMillisApple()
+            val sentAt = nowMillis()
             lastPong.store(0)
-            dispatch_async(dispatch_get_main_queue()) { lastPong.store(nowMillisApple()) }
+            dispatchToMainThread { lastPong.store(nowMillis()) }
 
             var waited = 0L
             while (lastPong.load() == 0L && waited < MAX_HANG_WAIT_MS) {
                 delay(PING_POLL_MS)
-                waited = nowMillisApple() - sentAt
+                waited = nowMillis() - sentAt
             }
             val answered = lastPong.load()
             val blockedMs = if (answered == 0L) waited else answered - sentAt
@@ -171,14 +167,12 @@ internal class AutoInstrumentation(
     }
 }
 
-/** Foreground/background transitions, which only the UI frameworks know about. */
-internal expect class AppActivationObserver(onActive: () -> Unit, onBackground: () -> Unit) {
+/**
+ * Foreground/background transitions, which only the UI frameworks know about. Each callback gets
+ * the epoch ms the transition happened at: a platform that learns of one late — the app became
+ * active before the SDK's observer existed — still reports when it really happened, so the launch
+ * time is not stretched by the SDK's own start-up.
+ */
+internal expect class AppActivationObserver(onActive: (observedAt: Long) -> Unit, onBackground: (observedAt: Long) -> Unit) {
     fun close()
-}
-
-/** Epoch milliseconds; the SDK's own clock, not the host's. */
-internal fun nowMillisApple(): Long = memScoped {
-    val tv = alloc<timeval>()
-    platform.posix.gettimeofday(tv.ptr, null)
-    tv.tv_sec * 1000L + tv.tv_usec / 1000L
 }

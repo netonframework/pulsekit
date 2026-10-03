@@ -1,5 +1,3 @@
-@file:OptIn(kotlinx.cinterop.ExperimentalForeignApi::class)
-
 package pulse
 
 import kotlinx.coroutines.CompletableDeferred
@@ -7,23 +5,13 @@ import kotlinx.coroutines.cancelChildren
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch
-import kotlin.native.concurrent.ObsoleteWorkersApi
-import kotlin.native.concurrent.TransferMode
-import kotlin.native.concurrent.Worker
 import neton.io.net.runReactor
 import pulse.core.PulseConfig
-import pulse.runtime.SensitiveApiMonitor
-import pulse.runtime.reportMonitorInstallation
-import pulse.runtime.reportPrivacyDeclarations
-import pulse.runtime.reportSigningDeclarations
-import pulse.runtime.reportObjectiveCMethodInventory
-import pulse.runtime.retryPendingHooks
-import pulse.runtime.reportSensitiveApiObservations
 import kotlin.concurrent.atomics.AtomicReference
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
 
 /**
- * The Objective-C facing entry point, and the one an iOS host should use.
+ * The host-app entry point: Objective-C facing on iOS, behind the Java facade on Android.
  *
  * [Pulse.start] takes a CoroutineScope and suspends, which is the right shape for Kotlin callers
  * and a bad one for a host app: an iOS app has no coroutine scope to hand over, and the transport
@@ -37,7 +25,7 @@ import kotlin.concurrent.atomics.ExperimentalAtomicApi
  * The host app's Kotlin version does not have to match this SDK's — the boundary here is the
  * framework's Objective-C interface, not a klib.
  */
-@OptIn(ObsoleteWorkersApi::class, ExperimentalAtomicApi::class)
+@OptIn(ExperimentalAtomicApi::class)
 object PulseSDK {
     // Named PulseSDK, not PulseKit: Swift drops the framework prefix from exported classes, so an
     // object called PulseKit inside a framework called PulseKit collides with the module name at
@@ -64,7 +52,8 @@ object PulseSDK {
      * unreachable and the host keeps calling track(), the queue must not grow without limit.
      */
     private var commands: Channel<Command>? = null
-    private var worker: Worker? = null
+    /** Ends the SDK thread (see [startSdkThread]); null while the SDK is not running. */
+    private var stopThread: (() -> Unit)? = null
     private var lifecycleFlushObserver: AppLifecycleFlushObserver? = null
 
     /**
@@ -95,14 +84,14 @@ object PulseSDK {
     private const val RUNTIME_POLL_MS = 30_000L
 
     /** True once [start] has spun up the reactor thread. */
-    val isRunning: Boolean get() = worker != null
+    val isRunning: Boolean get() = stopThread != null
 
     /**
      * Start the SDK on its own thread. Returns immediately; the connection is established in the
      * background and events emitted before it is up are buffered, not lost.
      */
     fun start(config: PulseConfig) {
-        if (worker != null) return
+        if (stopThread != null) return
 
         // Hooks go in first, synchronously, before anything else in start() can block.
         //
@@ -111,13 +100,13 @@ object PulseSDK {
         // trip's worth of launch during which nothing is being watched — and launch is exactly
         // when an advertising or analytics SDK reads the identifiers it came for. Installing is
         // local and allocation-light, so there is no reason for it to wait behind I/O.
-        if (config.runtime) SensitiveApiMonitor.install()
+        if (config.runtime) armRuntimeMonitor()
         val queue = Channel<Command>(COMMAND_QUEUE_CAPACITY, BufferOverflow.DROP_OLDEST)
         commands = queue
         lifecycleFlushObserver = AppLifecycleFlushObserver { flush() }
-        val w = Worker.start(name = "pulsekit")
-        worker = w
-        w.execute(TransferMode.SAFE, { config to queue }) { (cfg, channel) ->
+        val cfg = config
+        val channel = queue
+        stopThread = startSdkThread("pulsekit") {
             runReactor {
                 val pulse = Pulse.start(this, cfg)
                 val stopped = CompletableDeferred<CompletableDeferred<Unit>>()
@@ -140,20 +129,13 @@ object PulseSDK {
                 // callback firing continuously costs one event per tick instead of thousands.
                 val runtime = pulse.runtime
                 if (runtime != null) {
-                    // Already armed above; this only reports what ended up being watched, which
-                    // needs the client that now exists.
-                    runtime.reportMonitorInstallation()
-                    runtime.reportPrivacyDeclarations()
-                    runtime.reportSigningDeclarations()
-                    // Inventory does not replace or call arbitrary methods. It reads the ObjC
-                    // runtime metadata once so unexecuted plugin entry points remain auditable.
-                    runtime.reportObjectiveCMethodInventory()
+                    // Already armed above; this reports what ended up being watched and what the
+                    // final build declares, which needs the client that now exists.
+                    runtime.reportRuntimeDeclarations()
                     launch {
                         while (true) {
                             kotlinx.coroutines.delay(RUNTIME_POLL_MS)
-                            runtime.retryPendingHooks()
-                            runtime.scan()
-                            runtime.reportSensitiveApiObservations()
+                            runtime.pollRuntimeObservations()
                         }
                     }
                 }
@@ -195,52 +177,49 @@ object PulseSDK {
     }
 
     /**
-     * Convenience start for hosts that do not want to build a [PulseConfig] across the
-     * Objective-C boundary, where a Kotlin data class with ten defaulted parameters turns into an
-     * initialiser taking all ten.
+     * Start with the App ID created in the Pulse console and the ingest server's URL, e.g.
+     * `startWithAppId("pulse_xxx", "tcp://collect.example.com:6000")`. Runtime observation is on,
+     * and the app's package, build number and version are read from the platform.
+     *
+     * The App ID identifies the event stream; it is not a secret.
      */
-    fun start(
-        projectId: String,
-        host: String,
-        port: Int = 9600,
-        runtime: Boolean = true,
-        packageName: String? = null,
-        buildNumber: Long = 0,
-        appVersion: String? = null,
-    ) = start(
-        PulseConfig(
-            projectId = projectId, host = host, port = port, runtime = runtime,
-            // Fixed to "ios" here: this facade only exists on Apple targets, so asking the host to
-            // pass its own platform would only create a way to get it wrong.
-            platform = "ios", deviceType = currentDeviceType(), packageName = packageName,
-            buildNumber = buildNumber, appVersion = appVersion,
-        ),
-    )
+    fun startWithAppId(appId: String, endpoint: String) =
+        startWithAppId(appId, endpoint, runtime = true, packageName = null, buildNumber = 0L, appVersion = null)
 
     /**
-     * Preferred iOS entry point. App ID is created by the Pulse console and embedded in the host
-     * app; it identifies the event stream but is not an authentication secret.
+     * The full form, without Kotlin default arguments: they do not survive into the Objective-C
+     * interface, so a Swift caller would otherwise have to pass every parameter of a defaulted one.
      *
-     * The older `start(projectId:...)` selector remains available so already integrated builds do
-     * not break while hosts move to the App ID terminology.
+     * [packageName] null, [buildNumber] 0 and [appVersion] null mean "this app's own", as the
+     * platform reports it. A malformed [endpoint] does not throw: telemetry must never be the
+     * reason an app fails to start, so the SDK logs why and stays stopped.
      */
     fun startWithAppId(
         appId: String,
-        host: String,
-        port: Int = 9600,
-        runtime: Boolean = true,
-        packageName: String? = null,
-        buildNumber: Long = 0,
-        appVersion: String? = null,
-    ) = start(
-        projectId = appId,
-        host = host,
-        port = port,
-        runtime = runtime,
-        packageName = packageName,
-        buildNumber = buildNumber,
-        appVersion = appVersion,
-    )
+        endpoint: String,
+        runtime: Boolean,
+        packageName: String?,
+        buildNumber: Long,
+        appVersion: String?,
+    ) {
+        val own = hostBuild()
+        val config = try {
+            PulseConfig(
+                projectId = appId, endpoint = endpoint, runtime = runtime,
+                // Fixed per platform ("ios" / "android"): the facade knows which one it was built
+                // for, so asking the host to pass its own platform would only create a way to get
+                // it wrong.
+                platform = hostPlatform, deviceType = currentDeviceType(),
+                packageName = packageName ?: own.packageName,
+                buildNumber = if (buildNumber != 0L) buildNumber else own.buildNumber,
+                appVersion = appVersion ?: own.appVersion,
+            )
+        } catch (e: IllegalArgumentException) {
+            println("PulseKit: not started: ${e.message}")
+            return
+        }
+        start(config)
+    }
 
     /**
      * Wait up to [timeoutMillis] for the startup update check to come back.
@@ -250,10 +229,10 @@ object PulseSDK {
      * that can strand users behind a spinner is worse than a missed update prompt.
      */
     fun awaitUpdateInfo(timeoutMillis: Long = 5_000): AppUpdate {
-        val deadline = platform.posix.time(null).toLong() * 1000L + timeoutMillis
+        val deadline = pulse.core.nowMillis() + timeoutMillis
         while (updateState.load() == null) {
-            if (platform.posix.time(null).toLong() * 1000L > deadline) return noUpdate()
-            platform.posix.usleep(5_000u)
+            if (pulse.core.nowMillis() > deadline) return noUpdate()
+            sleepMillis(5)
         }
         return updateState.load() ?: noUpdate()
     }
@@ -303,7 +282,7 @@ object PulseSDK {
 
     /** Flush, close the connection and stop the reactor thread. */
     fun stop(timeoutMillis: Long = 3_000) {
-        val w = worker ?: return
+        val requestStop = stopThread ?: return
         lifecycleFlushObserver?.close()
         lifecycleFlushObserver = null
         val queue = commands
@@ -316,8 +295,8 @@ object PulseSDK {
         }
         commands = null
         updateState.store(null)
-        w.requestTermination(processScheduledJobs = false)
-        worker = null
+        requestStop()
+        stopThread = null
     }
 
     /**
@@ -328,10 +307,10 @@ object PulseSDK {
      * callers are explicitly "I am willing to block for a moment" operations.
      */
     private fun awaitCompletion(done: CompletableDeferred<Unit>, timeoutMillis: Long) {
-        val deadline = platform.posix.time(null).toLong() * 1000L + timeoutMillis
+        val deadline = pulse.core.nowMillis() + timeoutMillis
         while (!done.isCompleted) {
-            if (platform.posix.time(null).toLong() * 1000L > deadline) return
-            platform.posix.usleep(2_000u)
+            if (pulse.core.nowMillis() > deadline) return
+            sleepMillis(2)
         }
     }
 }

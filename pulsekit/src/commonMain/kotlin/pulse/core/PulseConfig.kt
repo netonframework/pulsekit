@@ -8,8 +8,8 @@ package pulse.core
 data class PulseConfig(
     /** Stable App ID/AppKey created in the Pulse console; it is public identification, not a secret. */
     val projectId: String,
-    val host: String,
-    val port: Int = 9600,
+    /** The ingest server as a URL, e.g. `tcp://collect.example.com:6000`; see [PulseEndpoint]. */
+    val endpoint: String,
     val analytics: Boolean = true,
     val apm: Boolean = true,
     val runtime: Boolean = false,
@@ -50,6 +50,9 @@ data class PulseConfig(
     /** Device family reported during connection registration, for example `iPhone` or `iPad`. */
     val deviceType: String? = null,
 ) {
+    /** [endpoint], parsed; constructing a config with a malformed one fails here, not at connect. */
+    val server: PulseEndpoint = PulseEndpoint.parse(endpoint)
+
     init {
         require(batchMaxEvents > 0) { "batchMaxEvents must be positive" }
         require(batchMaxBytes > 0) { "batchMaxBytes must be positive" }

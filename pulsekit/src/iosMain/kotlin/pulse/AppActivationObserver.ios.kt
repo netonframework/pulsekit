@@ -1,6 +1,7 @@
 package pulse
 
 import platform.Foundation.NSNotificationCenter
+import pulse.core.nowMillis
 import platform.UIKit.UIApplicationDidBecomeActiveNotification
 import platform.UIKit.UIApplicationDidEnterBackgroundNotification
 
@@ -10,20 +11,20 @@ import platform.UIKit.UIApplicationDidEnterBackgroundNotification
  * the background, which is what makes the same observer usable for session shape.
  */
 internal actual class AppActivationObserver actual constructor(
-    onActive: () -> Unit,
-    onBackground: () -> Unit,
+    onActive: (observedAt: Long) -> Unit,
+    onBackground: (observedAt: Long) -> Unit,
 ) {
     private val center = NSNotificationCenter.defaultCenter
     private val activeToken = center.addObserverForName(
         name = UIApplicationDidBecomeActiveNotification,
         `object` = null,
         queue = null,
-    ) { onActive() }
+    ) { onActive(nowMillis()) }
     private val backgroundToken = center.addObserverForName(
         name = UIApplicationDidEnterBackgroundNotification,
         `object` = null,
         queue = null,
-    ) { onBackground() }
+    ) { onBackground(nowMillis()) }
 
     actual fun close() {
         center.removeObserver(activeToken)

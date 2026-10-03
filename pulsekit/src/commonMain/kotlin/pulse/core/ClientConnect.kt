@@ -26,7 +26,8 @@ data class ClientConnectRequest(
 ) {
     companion object {
         const val CURRENT_PROTOCOL_VERSION: Int = 2
-        const val SDK_VERSION: String = "1.0.0"
+        /** The release this SDK was built as; generated from the Gradle version (see build.gradle.kts). */
+        const val SDK_VERSION: String = PULSEKIT_VERSION
     }
 }
 

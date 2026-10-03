@@ -9,7 +9,7 @@ class ClientConnectTest {
     fun clientConnectReusesDurableBatchIdentity() {
         val config = PulseConfig(
             projectId = "app-1",
-            host = "127.0.0.1",
+            endpoint = "tcp://127.0.0.1",
             platform = "ios",
             deviceType = "iPhone",
             packageName = "com.example.app",

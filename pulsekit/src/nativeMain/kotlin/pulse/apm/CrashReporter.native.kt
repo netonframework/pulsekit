@@ -3,6 +3,7 @@
 package pulse.apm
 
 import kotlinx.cinterop.ByteVar
+import kotlinx.cinterop.CFunction
 import kotlinx.cinterop.COpaquePointerVar
 import kotlinx.cinterop.CPointer
 import kotlinx.cinterop.ExperimentalForeignApi
@@ -12,27 +13,22 @@ import kotlinx.cinterop.memScoped
 import kotlinx.cinterop.nativeHeap
 import kotlinx.cinterop.set
 import kotlinx.cinterop.staticCFunction
-import kotlinx.cinterop.toKString
+import kotlinx.cinterop.addressOf
+import kotlinx.cinterop.usePinned
+import pulse.posixshim.pulse_list_dir
+import pulse.posixshim.pulse_read_file
+import pulse.posixshim.pulse_time_seconds
+import pulse.posixshim.pulse_write_bytes
 import platform.posix.SIGABRT
 import platform.posix.SIGBUS
 import platform.posix.SIGFPE
 import platform.posix.SIGILL
 import platform.posix.SIGSEGV
 import platform.posix.SIGTRAP
-import platform.posix.SIG_DFL
 import platform.posix.close
-import platform.posix.closedir
-import platform.posix.fclose
 import platform.posix.fsync
-import platform.posix.fgets
-import platform.posix.fopen
-import platform.posix.opendir
 import platform.posix.raise
-import platform.posix.readdir
-import platform.posix.signal
-import platform.posix.time
 import platform.posix.unlink
-import platform.posix.write
 
 /**
  * POSIX signal capture, shared by Apple and Linux — both are POSIX here and the constraint that
@@ -66,7 +62,7 @@ actual object CrashReporter {
     private var frameBuf: CPointer<COpaquePointerVar>? = null
     private var installed = false
 
-    private const val RECORD_NAME = "crash.record"
+    private const val RECORD_NAME = CRASH_RECORD_NAME
 
     /**
      * Frames captured per crash. Deep enough to reach past the runtime's own frames into
@@ -109,7 +105,7 @@ actual object CrashReporter {
         installed = true
 
         for (sig in intArrayOf(SIGSEGV, SIGABRT, SIGBUS, SIGILL, SIGFPE, SIGTRAP)) {
-            signal(sig, handler)
+            armCrashSignal(sig, handler)
         }
     }
 
@@ -126,9 +122,9 @@ actual object CrashReporter {
             writeC(fd, kSig)
             writeInt(fd, sig.toLong(), scr)
             writeC(fd, kTs)
-            writeInt(fd, time(null).toLong(), scr)
+            writeInt(fd, pulse_time_seconds(), scr)
             writeC(fd, kSession)
-            sessionBuf?.let { write(fd, it, sessionLen.toULong()) }
+            sessionBuf?.let { pulse_write_bytes(fd, it, sessionLen) }
 
             // The addresses on their own mean nothing once the process is gone: the same build
             // maps at a different address every launch. The slide is what turns a runtime address
@@ -150,20 +146,13 @@ actual object CrashReporter {
             close(fd)
         }
         // Let the crash proceed normally: the platform reporter and any debugger still see it.
-        signal(sig, SIG_DFL)
+        restoreCrashSignal(sig)
         raise(sig)
     }
 
     actual fun drainPending(storageDir: String): List<PendingCrash> {
         val out = ArrayList<PendingCrash>()
-        val dir = opendir(storageDir) ?: return out
-        val names = ArrayList<String>()
-        while (true) {
-            val entry = readdir(dir) ?: break
-            val name = entry[0].d_name.toKString()
-            if (name.startsWith(RECORD_NAME)) names.add(name)
-        }
-        closedir(dir)
+        val names = listDirectory(storageDir).filter { it.startsWith(RECORD_NAME) }
 
         for (name in names) {
             val full = "$storageDir/$name"
@@ -173,34 +162,32 @@ actual object CrashReporter {
         return out
     }
 
-    private fun parseRecord(path: String): PendingCrash? = memScoped {
-        val f = fopen(path, "r") ?: return null
-        val buf = allocArray<ByteVar>(1024)
-        val fields = HashMap<String, String>()
-        while (fgets(buf, 1024, f) != null) {
-            val line = buf.toKString().trim()
-            val i = line.indexOf('=')
-            if (i > 0) fields[line.substring(0, i)] = line.substring(i + 1)
-        }
-        fclose(f)
-        // Two producers write here. The signal handler writes sig=; the uncaught-exception
-        // reporter writes name=/message= instead, because an exception knows what it was and
-        // "SIGABRT" is the least useful way to say NSInvalidArgumentException.
-        val sig = fields["sig"]?.toIntOrNull()
-        val name = fields["name"] ?: sig?.let(::signalName) ?: return null
-        val message = fields["message"]?.takeIf { it.isNotBlank() }
-            ?: sig?.let { "process terminated by signal $it" }
-            ?: name
-        val ts = fields["ts"]?.toLongOrNull() ?: 0L
-        PendingCrash(
-            name = name,
-            message = message,
-            timestampMs = ts * 1000L,
-            sessionId = fields["session"].orEmpty(),
-            imageSlide = fields["slide"]?.toLongOrNull() ?: 0L,
-            frames = fields["frames"]?.split(',')?.mapNotNull { it.trim().toLongOrNull() } ?: emptyList(),
-        )
+    private fun parseRecord(path: String): PendingCrash? = parseCrashRecord(readRecord(path), ::signalName)
+
+    /**
+     * The whole record, bounded. Read in one piece rather than line by line through a fixed
+     * buffer: a frame list or an escaped stack trace is longer than any line buffer worth keeping,
+     * and a split line would turn its tail into a bogus field.
+     */
+    private fun readRecord(path: String): String {
+        val out = ByteArray(MAX_CRASH_RECORD_BYTES)
+        val n = out.usePinned { pulse_read_file(path, it.addressOf(0), MAX_CRASH_RECORD_BYTES) }
+        return if (n <= 0) "" else out.decodeToString(0, n)
     }
+
+    /** Entry names in [path]; empty when it cannot be read. */
+    private fun listDirectory(path: String): List<String> {
+        var capacity = 4096
+        repeat(4) {
+            val buffer = ByteArray(capacity)
+            val needed = buffer.usePinned { pulse_list_dir(path, it.addressOf(0), capacity) }
+            if (needed < 0) return emptyList()
+            if (needed <= capacity) return buffer.decodeToString(0, needed).split('\n').filter(String::isNotEmpty)
+            capacity = needed + 1024
+        }
+        return emptyList()
+    }
+
 
     /** Human-readable in the report; the number stays in the message for anything unmapped. */
     private fun signalName(sig: Int): String = when (sig) {
@@ -228,7 +215,7 @@ actual object CrashReporter {
         if (p == null) return
         var n = 0
         while (p[n] != 0.toByte()) n++
-        write(fd, p, n.toULong())
+        pulse_write_bytes(fd, p, n)
     }
 
     /**
@@ -250,7 +237,7 @@ actual object CrashReporter {
         val start = i + 1
         val len = 32 - start
         for (k in 0 until len) scr[k] = scr[start + k]
-        write(fd, scr, len.toULong())
+        pulse_write_bytes(fd, scr, len)
     }
 }
 
@@ -263,3 +250,13 @@ internal expect fun makeDirectory(path: String)
 
 /** open(2) O_WRONLY|O_CREAT|O_TRUNC with 0644, returning the descriptor or -1. */
 internal expect fun openRecordFile(path: String): Int
+
+/** Point [sig] at [handler]. */
+internal expect fun armCrashSignal(sig: Int, handler: CPointer<CFunction<(Int) -> Unit>>)
+
+/**
+ * Hand [sig] back before re-raising it. Async-signal-safe. Apple and Linux restore the default
+ * disposition; Android restores the handler that was there before, because that is debuggerd's,
+ * and without it the crash leaves no tombstone and never reaches the platform's crash reporting.
+ */
+internal expect fun restoreCrashSignal(sig: Int)
