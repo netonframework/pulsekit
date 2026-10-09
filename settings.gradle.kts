@@ -5,7 +5,7 @@ rootProject.name = "pulsekit-build"
 // The transport foundation. Consumed as sibling composite builds during development so everything
 // compiles with one Kotlin/Native toolchain; the coordinates match the published artifacts, so
 // removing these two lines resolves them from Maven Central instead.
-includeBuild("../neton-io")
+includeBuild("../io")
 includeBuild("../msgtrans-kotlin")
 // The SDK itself, one artifact: com.netonstream:pulsekit. The root is named differently only so the
 // module can carry the product name (Gradle does not allow a subproject named like its root).

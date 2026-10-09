@@ -6,7 +6,7 @@ plus evidence-oriented auditing of third-party plugins inserted during signing a
 PulseKit is a data/reliability SDK — it does not integrate any IM/PrivChat logic.
 
 The client SDK produces one unified `Event` model and ships batches to the Pulse ingest server over
-the [msgtrans](../msgtrans-kotlin) long connection (which runs on the [neton-io](../neton-io)
+the [msgtrans](../msgtrans-kotlin) long connection (which runs on the [neton-io](../io)
 reactor). The server hands received batches to the Pulse modules → a Redis queue → consumers that
 persist into each module's store.
 
