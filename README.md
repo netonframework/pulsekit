@@ -24,9 +24,14 @@ through a boundary that does not care about the host's Kotlin version:
   Kotlin version.
 
 ```kotlin
-dependencies { implementation("com.netonstream:pulsekit:0.2.0") }          // Kotlin/Native
-dependencies { implementation("com.netonstream:pulsekit-android:0.2.0") }  // Android app
+dependencies { implementation("com.netonstream:pulsekit:0.2.1") }          // Kotlin/Native
+dependencies { implementation("com.netonstream:pulsekit-android:0.2.1") }  // Android app
 ```
+
+**0.2.1** (2026-10-09): on Linux the device and installation ids were never persisted on an account without
+`~/.local` (the store's directory chain was not created), so every start looked like a new device; msgtrans 0.3.0
+(zstd compression of incompressible payloads above about 1 KB failed in 0.2.0); `newId()` from `kotlin.uuid.Uuid`
+(secure random); the Kotlin/Native artifacts are built with Kotlin 2.4.20.
 
 The capabilities are packages, not artifacts — whether one runs is `PulseConfig`'s decision
 (`analytics` / `apm` / `runtime`), and the linker strips what a build does not reach:
