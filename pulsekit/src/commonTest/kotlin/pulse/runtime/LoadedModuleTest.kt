@@ -33,10 +33,10 @@ class LoadedModuleTest {
     @Test
     fun theProcessImageItselfIsListed() {
         if (!pulse.platformListsImages()) return
-        // The main executable is always in the loader's table on both platforms.
+        // The main executable is always in the loader's table on every platform; on a JVM it is the launcher.
         val paths = loadedModules().map { it.path }
         assertTrue(
-            paths.any { it.endsWith(".kexe") || it.contains("test") },
+            paths.any { it.endsWith(".kexe") || it.contains("test") || it.endsWith("/bin/java") },
             "the test binary is not in the inventory: ${paths.take(5)}",
         )
     }
