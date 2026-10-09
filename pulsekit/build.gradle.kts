@@ -25,10 +25,11 @@ kotlin {
         // propagate the option; the smoke binary exists for the integration test.
         t.binaries.configureEach { linkerOpts("-lsqlite3") }
         // Kotlin/Native links Linux binaries against its own sysroot, which has no libsqlite3: on a Linux
-        // host, also search the distribution's multiarch directory (libsqlite3-dev).
+        // host, also search the distribution's multiarch directory (libsqlite3-dev). That library needs a
+        // newer glibc than the sysroot's; its symbols resolve at run time, on the host that built it.
         val multiarch = mapOf("linuxX64" to "x86_64-linux-gnu", "linuxArm64" to "aarch64-linux-gnu")[t.name]
         if (multiarch != null && file("/usr/lib/$multiarch/libsqlite3.so").exists()) {
-            t.binaries.configureEach { linkerOpts("-L/usr/lib/$multiarch") }
+            t.binaries.configureEach { linkerOpts("-L/usr/lib/$multiarch", "--allow-shlib-undefined") }
         }
         t.binaries.executable("pulseSmoke") { entryPoint = "pulse.pulseSmokeMain" }
         // A stand-in ingest server for device and emulator end-to-end runs; see IngestStub.kt.
