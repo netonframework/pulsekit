@@ -1,12 +1,24 @@
 plugins {
-    kotlin("multiplatform") version "2.4.0" apply false
-    kotlin("plugin.serialization") version "2.4.0" apply false
-    kotlin("native.cocoapods") version "2.4.0" apply false
+    kotlin("multiplatform") version "2.4.20" apply false
+    kotlin("plugin.serialization") version "2.4.20" apply false
+    kotlin("native.cocoapods") version "2.4.20" apply false
     // 2.2.x, not 2.3: SQLDelight 2.3's runtime requires kotlin-stdlib 2.3, which an Android host on
     // Kotlin 2.1 cannot compile against (see coreLibrariesVersion in pulsekit/build.gradle.kts).
     id("app.cash.sqldelight") version "2.2.1" apply false
     id("com.android.library") version "8.13.2" apply false
     id("com.android.application") version "8.13.2" apply false
+}
+
+// Kotlin floor 2.4.20: anything below it (2.4.20 Beta / RC included) is refused. The stack and the Neton
+// repositories share one Kotlin line; mixed versions break K/N klibs in ways that are hard to read.
+run {
+    val required = KotlinVersion(2, 4, 20)
+    val actual = org.jetbrains.kotlin.gradle.plugin.getKotlinPluginVersion(logger)
+    val parts = actual.substringBefore('-').split('.').map { it.toIntOrNull() ?: 0 } + listOf(0, 0, 0)
+    val parsed = KotlinVersion(parts[0], parts[1], parts[2])
+    require(parsed > required || (parsed == required && '-' !in actual)) {
+        "Kotlin $actual is below the required minimum $required. Upgrade the Kotlin Gradle plugin."
+    }
 }
 allprojects {
     group = "com.netonstream"

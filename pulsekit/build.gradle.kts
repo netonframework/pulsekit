@@ -31,7 +31,7 @@ kotlin {
     // iOS: the SDK ships as an Objective-C framework, not as a klib.
     //
     // A host app is free to be on a different Kotlin version than this SDK — mall-demo-app is
-    // pinned to 2.1.21 by KuiklyUI while this stack is on 2.4.0 — and klibs are not compatible
+    // pinned to 2.1.21 by KuiklyUI while this stack is on 2.4.20 — and klibs are not compatible
     // across that gap. The framework boundary is a plain Objective-C binary interface, so the
     // host's Kotlin version stops mattering. Dynamic rather than static: each Kotlin/Native
     // framework carries its own runtime, and two static ones in one binary collide at link time.

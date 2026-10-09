@@ -3,17 +3,14 @@ package pulse.core
 /** Wall-clock epoch milliseconds. */
 expect fun nowMillis(): Long
 
-private const val HEX = "0123456789abcdef"
-
 /**
- * A fresh unique id for events, sessions, installations: a random 128-bit value as 32 hex chars.
- * Not RFC-4122 formatted; uniqueness is what matters.
+ * A fresh unique id for events, sessions, installations: a random (version 4) UUID as 32 hex chars, from the platform's
+ * secure random source (`kotlin.uuid.Uuid`, stable in Kotlin 2.4; the opt-in is for the 2.2 API level this SDK keeps for
+ * Kotlin 2.1 hosts). The 32-hex format is unchanged; it used to come from `kotlin.random.Random`, which is not a secure
+ * source.
  */
-fun newId(): String {
-    val sb = StringBuilder(32)
-    repeat(32) { sb.append(HEX[kotlin.random.Random.nextInt(16)]) }
-    return sb.toString()
-}
+@OptIn(kotlin.uuid.ExperimentalUuidApi::class)
+fun newId(): String = kotlin.uuid.Uuid.random().toHexString()
 
 /** Per-app durable directory for the event outbox and next-launch crash record. */
 expect fun defaultPulseStorageDir(projectId: String): String
