@@ -32,10 +32,22 @@ actual object PersistentStore {
     private fun dir(): String {
         val state = getenv("XDG_STATE_HOME")?.toKString()?.takeIf { it.isNotEmpty() }
         val base = state ?: (getenv("HOME")?.toKString()?.plus("/.local/state") ?: "/tmp")
-        mkdir(base, 493u)          // 0755; already-exists is fine and is the common case
         val d = "$base/pulsekit"
-        mkdir(d, 493u)
+        mkdirs(d)
         return d
+    }
+
+    /**
+     * `mkdir -p`, 0755: a fresh account has no `~/.local`, and a plain mkdir of `~/.local/state` then fails, so
+     * nothing was ever written and every start got new ids. Already-exists is fine and is the common case.
+     */
+    private fun mkdirs(path: String) {
+        var i = path.indexOf('/', 1)
+        while (i > 0) {
+            mkdir(path.substring(0, i), 493u)
+            i = path.indexOf('/', i + 1)
+        }
+        mkdir(path, 493u)
     }
 
     private fun path(): String = dir() + "/ids"
