@@ -2,11 +2,12 @@ pluginManagement {
     repositories { gradlePluginPortal(); mavenCentral(); google() }
 }
 rootProject.name = "pulsekit-build"
-// The transport foundation. Consumed as sibling composite builds during development so everything
-// compiles with one Kotlin/Native toolchain; the coordinates match the published artifacts, so
-// removing these two lines resolves them from Maven Central instead.
-includeBuild("../io")
-includeBuild("../msgtrans-kotlin")
+// The transport foundation. Consumed as sibling composite builds during development (~/projects/Neton/io and
+// msgtrans-kotlin) so everything compiles with one Kotlin/Native toolchain; the coordinates match the published
+// artifacts, so where the siblings are absent (CI, a lone checkout) they resolve from Maven Central instead.
+for (sibling in listOf("../io", "../msgtrans-kotlin")) {
+    if (file(sibling).isDirectory) includeBuild(sibling)
+}
 // The SDK itself, one artifact: com.netonstream:pulsekit. The root is named differently only so the
 // module can carry the product name (Gradle does not allow a subproject named like its root).
 include(":pulsekit")
