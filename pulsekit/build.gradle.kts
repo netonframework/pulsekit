@@ -122,8 +122,8 @@ kotlin {
         // version so the two cannot drift apart.
         commonMain { kotlin.srcDir(generateSdkVersion) }
         commonMain.dependencies {
-            api("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
-            api("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2")
+            api("org.jetbrains.kotlinx:kotlinx-serialization-json:1.11.0")
+            api("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.11.0")
             api("com.netonstream:msgtrans:0.3.0")
         }
         getByName("systemSqliteMain").dependencies {
@@ -131,7 +131,7 @@ kotlin {
         }
         commonTest.dependencies {
             implementation(kotlin("test"))
-            implementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.10.2")
+            implementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.11.0")
         }
         // The JVM has no SQLite of its own: Android hands the SDK its framework driver (see
         // pulse.host.HostEnvironment); tests use the JDBC driver.
