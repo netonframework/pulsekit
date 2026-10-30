@@ -24,9 +24,15 @@ through a boundary that does not care about the host's Kotlin version:
   Kotlin version.
 
 ```kotlin
-dependencies { implementation("com.netonstream:pulsekit:0.2.1") }          // Kotlin/Native
-dependencies { implementation("com.netonstream:pulsekit-android:0.2.1") }  // Android app
+dependencies { implementation("com.netonstream:pulsekit:0.3.0") }          // Kotlin/Native
+dependencies { implementation("com.netonstream:pulsekit-android:0.3.0") }  // Android app
 ```
+
+**0.3.0** (2026-10-30): msgtrans 0.5.0, on com.netonstream:io 0.4, the same io as the Neton framework. The JVM
+classes now carry Kotlin metadata 2.2. A Kotlin 2.1 Android host (the KuiklyUI line) can compile against them
+directly, not only through the Java facade. kotlinx-serialization stays on 1.9.0: 1.10 and later need kotlin-stdlib
+2.3, which those hosts cannot read, and the build now fails if anything brings a newer stdlib onto the JVM classpath.
+kotlinx-coroutines is 1.11.0.
 
 **0.2.1** (2026-10-09): on Linux the device and installation ids were never persisted on an account without
 `~/.local` (the store's directory chain was not created), so every start looked like a new device; msgtrans 0.3.0
