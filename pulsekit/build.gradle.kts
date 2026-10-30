@@ -122,7 +122,9 @@ kotlin {
         // version so the two cannot drift apart.
         commonMain { kotlin.srcDir(generateSdkVersion) }
         commonMain.dependencies {
-            api("org.jetbrains.kotlinx:kotlinx-serialization-json:1.11.0")
+            // 1.9.x, not newer: 1.10 needs kotlin-stdlib 2.3 (and carries 2.3 metadata), which an Android host on
+            // Kotlin 2.1 cannot compile against; checkKotlin21Host below keeps it that way.
+            api("org.jetbrains.kotlinx:kotlinx-serialization-json:1.9.0")
             api("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.11.0")
             api("com.netonstream:msgtrans:0.5.0")
         }
@@ -184,3 +186,23 @@ tasks.matching { it.name.startsWith("link") && it.name.contains("Framework") }.c
             }
     }
 }
+
+// The JVM artifact's promise to Android hosts on Kotlin 2.1 (coreLibrariesVersion above): nothing on its runtime
+// classpath may need a kotlin-stdlib newer than 2.2.x, which is the newest whose metadata a Kotlin 2.1 compiler reads.
+// A dependency upgrade that lifts it (kotlinx-serialization 1.10+ does) fails the build here, not in a host app.
+val checkKotlin21Host = tasks.register("checkKotlin21Host") {
+    val stdlib = configurations.named("jvmRuntimeClasspath").map { classpath ->
+        classpath.incoming.resolutionResult.allComponents
+            .mapNotNull { it.moduleVersion }
+            .filter { it.group == "org.jetbrains.kotlin" && it.name.startsWith("kotlin-stdlib") }
+            .map { "${it.name}:${it.version}" }
+    }
+    doLast {
+        val tooNew = stdlib.get().filter { entry ->
+            val (major, minor) = entry.substringAfterLast(':').split('.').map { it.toIntOrNull() ?: 0 }
+            major > 2 || (major == 2 && minor > 2)
+        }
+        check(tooNew.isEmpty()) { "kotlin-stdlib newer than 2.2.x on the JVM runtime classpath (Kotlin 2.1 hosts cannot use it): $tooNew" }
+    }
+}
+tasks.named("jvmTest") { dependsOn(checkKotlin21Host) }
