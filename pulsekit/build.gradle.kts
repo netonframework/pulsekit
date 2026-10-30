@@ -124,7 +124,7 @@ kotlin {
         commonMain.dependencies {
             api("org.jetbrains.kotlinx:kotlinx-serialization-json:1.11.0")
             api("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.11.0")
-            api("com.netonstream:msgtrans:0.3.0")
+            api("com.netonstream:msgtrans:0.5.0")
         }
         getByName("systemSqliteMain").dependencies {
             implementation("app.cash.sqldelight:native-driver:2.2.1")
