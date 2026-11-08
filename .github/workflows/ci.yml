@@ -15,7 +15,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { name: macOS, os: macos-14, tasks: ":pulsekit:macosArm64Test :pulsekit:jvmTest", driver: "" }
+          - { name: macOS, os: macos-15, tasks: ":pulsekit:macosArm64Test :pulsekit:jvmTest", driver: "" }
           - { name: Linux epoll, os: ubuntu-latest, tasks: ":pulsekit:linuxX64Test :pulsekit:jvmTest", driver: epoll }
           - { name: Linux io_uring, os: ubuntu-latest, tasks: ":pulsekit:linuxX64Test", driver: iouring }
           - { name: Android unit, os: ubuntu-latest, tasks: ":pulsekit-android:testDebugUnitTest", driver: "" }
@@ -24,6 +24,9 @@ jobs:
     env:
       NETON_IO_DRIVER: ${{ matrix.driver }}
     steps:
+      - name: Select supported Xcode
+        if: runner.os == 'macOS'
+        run: echo "DEVELOPER_DIR=/Applications/Xcode_16.4.app/Contents/Developer" >> "$GITHUB_ENV"
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
         with:

@@ -126,7 +126,7 @@ kotlin {
             // Kotlin 2.1 cannot compile against; checkKotlin21Host below keeps it that way.
             api("org.jetbrains.kotlinx:kotlinx-serialization-json:1.9.0")
             api("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.11.0")
-            api("com.netonstream:msgtrans:0.5.0")
+            api("com.netonstream:msgtrans:0.5.1")
         }
         getByName("systemSqliteMain").dependencies {
             implementation("app.cash.sqldelight:native-driver:2.2.1")

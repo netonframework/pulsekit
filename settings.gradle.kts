@@ -6,7 +6,7 @@ rootProject.name = "pulsekit-build"
 // msgtrans-kotlin) so everything compiles with one Kotlin/Native toolchain; the coordinates match the published
 // artifacts, so where the siblings are absent (CI, a lone checkout) they resolve from Maven Central instead.
 for (sibling in listOf("../io", "../msgtrans-kotlin")) {
-    if (file(sibling).isDirectory) includeBuild(sibling)
+    if (providers.gradleProperty("netonstream.local").orNull != "false" && file(sibling).isDirectory) includeBuild(sibling)
 }
 // The SDK itself, one artifact: com.netonstream:pulsekit. The root is named differently only so the
 // module can carry the product name (Gradle does not allow a subproject named like its root).
